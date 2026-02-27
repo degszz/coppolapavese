@@ -1,0 +1,19 @@
+---
+import Layout from "../layouts/Layout.astro";
+import House from "../components/House.astro";
+import { getCollection } from "astro:content";
+const houses = await getCollection("houses");
+---
+
+<Layout title="Casas en Venta">
+    <div class="w-full h-fit flex justify-center">
+        <h2 class="text-lg md:text-xl my-4 text-center underline text-pink-700">
+            <b>PROPIEDADES EN VENTA</b>
+        </h2>
+    </div>
+    <ul
+        class="bg-white w-[100%] h-full grid grid-cols-2 md:grid-cols-3 place-items-center"
+    >
+        {houses.map((house) => <House {...house.data} slug={house.slug} />)}
+    </ul>
+</Layout>

@@ -1,0 +1,175 @@
+---
+import Layout from "../layouts/Layout.astro";
+import type { GetStaticPaths } from "astro";
+import { getCollection } from "astro:content";
+export const getStaticPaths = (async () => {
+    const house = await getCollection("houses");
+    return house.map((post) => ({ params: { slug: post.slug }, props: post }));
+}) satisfies GetStaticPaths;
+import { postcss } from "tailwindcss";
+const {
+    body,
+    data: {
+        image,
+        title,
+        price,
+        location,
+        ambientes,
+        banios,
+        habitaciones,
+        info,
+        slug,
+    },
+} = Astro.props;
+---
+
+<Layout title={title}>
+    <div class="w-full h-full flex justify-center bg-pink-300">
+        <div
+            class="flex flex-col items-center md:flex-row h-custom--calc md:h-custom-calc"
+        >
+            <div class="w-full h-3/4 md:h-full">
+                <swiper-container
+                    class="mySwiper w-full bg-black"
+                    pagination="true"
+                    pagination-clickable="true"
+                    direction="vertical"
+                    space-between="30"
+                    mousewheel="true"
+                >
+                    <swiper-slide><img src={image} /></swiper-slide>
+                    <swiper-slide><img src={image} /></swiper-slide>
+                    <swiper-slide><img src={image} /></swiper-slide>
+                </swiper-container>
+            </div>
+            <div
+                class="w-full flex md:flex-col h-1/4 md:h-full text-white bg-pink-300"
+            >
+                <div
+                    class="w-[60%] md:w-full md:h-[60%] h-full flex flex-col justify-center md:justify-end items-center"
+                >
+                    <h2 class="text-sm md:text-xl my-1">
+                        {title}
+                    </h2>
+                    <p class="text-sm text-pink-500 md:text-md">{location}</p>
+                    <p class="text-pink-700 text-sm md:text-md my-1">{price}</p>
+                    <div>
+                        <button
+                            class="bg-pink-500 text-white hover:bg-pink-700 flex-row border justify-center cursor-pointer hover:bg-black-600 hover:text-white focus:ring-2 focus:outline-none focus:ring-black-300 font-medium rounded-lg px-2.5 py-1.5 text-center inline-flex items-center dark:focus:ring-black-300 hover:shadow-lg transition-all duration-200 ease-in-out hover:scale-110 scale-90 gap-x-2 opacity-90 hover:opacity-100"
+                        >
+                            <b> Contactame </b>
+                        </button>
+                    </div>
+                </div>
+                <div
+                    class="flex w-[40%] md:w-full h-full md:h-[40%] flex-col justify-center items-start md:items-center md:justify-start"
+                >
+                    <div>
+                        <div class="flex">
+                            <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="24"
+                            height="24"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            class="icon icon-tabler icons-tabler-outline icon-tabler-home-cog"
+                            ><path stroke="none" d="M0 0h24v24H0z" fill="none"></path><path
+                                d="M9 21v-6a2 2 0 0 1 2 -2h1.6"></path><path
+                                d="M20 11l-8 -8l-9 9h2v7a2 2 0 0 0 2 2h4.159"></path><path
+                                d="M18 18m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"></path><path
+                                d="M18 14.5v1.5"></path><path d="M18 20v1.5"></path><path
+                                d="M21.032 16.25l-1.299 .75"></path><path
+                                d="M16.27 19l-1.3 .75"></path><path d="M14.97 16.25l1.3 .75"
+                            ></path><path d="M19.733 19l1.3 .75"></path></svg
+                        >
+                            <p>{ambientes}</p>
+                        </div>
+                        <div class="flex">
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="icon icon-tabler icons-tabler-outline icon-tabler-bath"
+                                ><path stroke="none" d="M0 0h24v24H0z" fill="none"
+                                ></path><path
+                                    d="M4 12h16a1 1 0 0 1 1 1v3a4 4 0 0 1 -4 4h-10a4 4 0 0 1 -4 -4v-3a1 1 0 0 1 1 -1z"
+                                ></path><path d="M6 12v-7a2 2 0 0 1 2 -2h3v2.25"
+                                ></path><path d="M4 21l1 -1.5"></path><path
+                                    d="M20 21l-1 -1.5"></path></svg
+                            >
+                            <p>{banios}</p>
+                        </div>
+                        <div class="flex">
+                            <svg
+                                xmlns="http://www.w3.org/2000/svg"
+                                width="24"
+                                height="24"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                                stroke-linecap="round"
+                                stroke-linejoin="round"
+                                class="icon icon-tabler icons-tabler-outline icon-tabler-bed"
+                                ><path stroke="none" d="M0 0h24v24H0z" fill="none"
+                                ></path><path d="M7 9m-2 0a2 2 0 1 0 4 0a2 2 0 1 0 -4 0"
+                                ></path><path d="M22 17v-3h-20"></path><path d="M2 8v9"
+                                ></path><path d="M12 14h10v-2a3 3 0 0 0 -3 -3h-7v5z"
+                                ></path></svg
+                            >
+                            <p>{habitaciones}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</Layout>
+
+<script
+    src="https://cdn.jsdelivr.net/npm/swiper@11/swiper-element-bundle.min.js"
+></script>
+<style>
+    body {
+        background: #eee;
+        font-family:
+            Helvetica Neue,
+            Helvetica,
+            Arial,
+            sans-serif;
+        font-size: 14px;
+        color: #000;
+        margin: 0;
+        padding: 0;
+    }
+
+    swiper-container {
+        width: 100%;
+        height: 100%;
+    }
+
+    swiper-slide {
+        text-align: center;
+        font-size: 18px;
+        background: #fff;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+
+    swiper-slide img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+    }
+</style>

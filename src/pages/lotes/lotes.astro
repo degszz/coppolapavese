@@ -1,0 +1,19 @@
+---
+import Layout from "../../layouts/Layout.astro";
+import Lote from "../../components/Lote.astro";
+import { getCollection } from "astro:content";
+const lotes = await getCollection("lotes");
+---
+
+<Layout title="Lotes en Venta">
+    <div class="w-full h-fit flex justify-center">
+        <h2 class="text-lg md:text-xl my-4 text-center underline text-pink-700">
+            <b>LOTES EN VENTA</b>
+        </h2>
+    </div>
+    <ul
+        class="bg-white w-[100%] h-full grid grid-cols-2 md:grid-cols-3 place-items-center"
+    >
+        {lotes.map((lote) => <Lote {...lote.data} slug={lote.slug} />)}
+    </ul>
+</Layout>

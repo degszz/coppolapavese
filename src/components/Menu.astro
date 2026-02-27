@@ -1,0 +1,56 @@
+<nav>
+    <a
+        id="menu-button"
+        data-collapse-toggle="navbar-sticky"
+        data-nav-toggle="#navbar-sticky"
+        class="cursor-pointer text-black hover:underline md:hidden lg:hidden"
+        aria-controls="navbar-sticky"
+        aria-expanded="false"
+    >
+        <b>MENU</b>
+    </a>
+    <div
+        id="menu-open"
+        class="items-center justify-between hidden w-full navbar"
+        id="navbar-sticky"
+    >
+        <ul
+            class="flex w-[80vw] md:w-[60vw] h-custom--calc left-0 md:h-custom-calc top-[51px] md:top-[80px] flex-col absolute bg-white items-center p-4 md:p-0  font-medium border  md:mt-0 "
+        >
+            <li>
+                <a
+                    href="/"
+                    class="hover:underline btn block py-2 px-3 text-pink-500 rounded md:bg-transparen md:p-0 hover:text-pink-700"
+                    aria-current="page"
+                >
+                    Home
+                </a>
+            </li>
+            <li>
+                <a
+                    href="/houses"
+                    class="hover:underline btn block py-2 px-3 text-pink-500 rounded md:bg-transparen md:p-0 hover:text-pink-700"
+                >
+                   Casas en Venta
+                </a>
+            </li>
+            <li>
+                <a
+                    href="/lotes/lotes"
+                    class="hover:underline btn block py-2 px-3 text-pink-500 rounded md:bg-transparen md:p-0 hover:text-pink-700"
+                >
+                   Lotes en Venta
+                </a>
+            </li>
+        </ul>
+    </div>
+</nav>
+
+<script>
+    const button = document.querySelector("#menu-button") as Element;
+    const menuOpen = document.querySelector("#menu-open") as Element;
+
+    button?.addEventListener("click", () => {
+        menuOpen.classList.toggle("hidden");
+    });
+</script>

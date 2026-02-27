@@ -1,0 +1,53 @@
+---
+import { type CollectionEntry } from "astro:content";
+type Props = CollectionEntry<"lotes">["data"] & { slug: string };
+import { Image } from "astro:assets";
+const { image, title, location, metros, slug } = Astro.props;
+---
+
+<a
+    class="max-h-[300px] md:max-h-[450px] bg-white w-[85%] md:text-lg text-black hover:text-white rounded-lg border-2 border-pink-500 flex flex-col justify-center items-center my-3.5 hover:bg-pink-500 duration-200 cursor-pointer"
+    href={`/lotes/${slug}`}
+>
+    <div class="flex items-center">
+        <Image
+            src={image}
+            width="500"
+            height="100"
+            class="rounded-t-md max-h-[160px] md:max-h-[260px]"
+            alt="multimedia"
+        />
+    </div>
+    <div
+        class="w-[100%] h-[40%] flex flex-col justify-around items-center border-t-2 p-2.5 md:p-6"
+    >
+        <h3 class="text-xs md:text-lg text-center"><b>{title}</b></h3>
+        <p class="text-xs md:text-md text-center text-pink-500">
+            <b>{location}</b>
+        </p>
+        <div class="flex items-center">
+            <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                class="icon icon-tabler icons-tabler-outline icon-tabler-meter-square"
+                ><path stroke="none" d="M0 0h24v24H0z" fill="none"></path><path
+                    d="M17 5h2a1 1 0 0 1 1 1v1a1 1 0 0 1 -1 1h-1a1 1 0 0 0 -1 1v1a1 1 0 0 0 1 1h2"
+                ></path><path d="M4 12v6"></path><path
+                    d="M4 14a2 2 0 0 1 2 -2h.5a2.5 2.5 0 0 1 2.5 2.5v3.5"
+                ></path><path d="M9 15.5v-1a2.5 2.5 0 1 1 5 0v3.5"></path></svg
+            >
+            <p class="text-xs md:text-md">
+                <b>
+                    {metros}
+                </b>
+            </p>
+        </div>
+    </div>
+</a>

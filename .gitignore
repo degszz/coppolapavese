@@ -1,0 +1,42 @@
+# Flutter
+node_modules/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+*.dill
+
+# Visual Studio
+.vs/
+*.db
+*.VC.db
+*.VC.opendb
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# Android
+android/.gradle/
+android/local.properties
+android/key.properties
+*.apk
+*.aab
+
+# iOS
+ios/Pods/
+ios/.symlinks/
+ios/Flutter/Flutter.framework
+ios/Flutter/Flutter.podspec
+
+# Windows
+windows/flutter/generated_plugin_registrant.cc
+windows/flutter/generated_plugins.cmake
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+
+# Dependencias
+pubspec.lock

@@ -1,0 +1,35 @@
+---
+interface Props {
+	title: string;
+}
+
+// Supports weights 400-900
+import '@fontsource-variable/playfair-display';
+// Supports weights 300-900
+import '@fontsource-variable/figtree';
+const { title } = Astro.props;
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+import Sidebar from '../components/Sidebar.astro';
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="description" content="Astro description" />
+		<meta name="viewport" content="width=device-width" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.png" />
+		<link href="/dist/styles.css" rel="stylesheet">
+		<meta name="generator" content={Astro.generator} />
+		<title>{title}</title>
+	</head>
+	<body class="font-serif">
+		<Header/>
+		<Sidebar/>
+		<div class="mt-[51px] md:mt-[80px] lg:ml-[200px]">
+			<slot />
+		</div>
+		<Footer/>
+	</body>
+</html>
