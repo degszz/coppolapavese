@@ -15,6 +15,8 @@ class ReciboModel {
   final String? usuario;
   final String? notas;
   final String createdAt;
+  final int? contratoId;  // v3
+  final int? numeroCuota; // v3
 
   // Campos JOIN (no se guardan en BD, vienen de consultas)
   final String? propietarioNombre;
@@ -43,6 +45,8 @@ class ReciboModel {
     this.usuario,
     this.notas,
     required this.createdAt,
+    this.contratoId,
+    this.numeroCuota,
     this.propietarioNombre,
     this.propietarioTelefono,
     this.propietarioEmail,
@@ -53,54 +57,55 @@ class ReciboModel {
     this.servicios = const [],
   });
 
-  Map<String, dynamic> toMap() {
-    return {
-      if (id != null) 'id': id,
-      'numero_recibo': numeroRecibo,
-      'propietario_id': propietarioId,
-      'inquilino_id': inquilinoId,
-      'domicilio_id': domicilioId,
-      'fecha_emision': fechaEmision,
-      'fecha_vencimiento': fechaVencimiento,
-      'monto_total': montoTotal,
-      'monto_abonado': montoAbonado,
-      'saldo': saldo,
-      'estado': estado,
-      'usuario': usuario ?? '',
-      'notas': notas ?? '',
-      'created_at': createdAt,
-    };
-  }
+  Map<String, dynamic> toMap() => {
+        if (id != null) 'id': id,
+        'numero_recibo': numeroRecibo,
+        'propietario_id': propietarioId,
+        'inquilino_id': inquilinoId,
+        'domicilio_id': domicilioId,
+        'fecha_emision': fechaEmision,
+        'fecha_vencimiento': fechaVencimiento,
+        'monto_total': montoTotal,
+        'monto_abonado': montoAbonado,
+        'saldo': saldo,
+        'estado': estado,
+        'usuario': usuario ?? '',
+        'notas': notas ?? '',
+        'created_at': createdAt,
+        if (contratoId != null) 'contrato_id': contratoId,
+        if (numeroCuota != null) 'numero_cuota': numeroCuota,
+      };
 
   factory ReciboModel.fromMap(
     Map<String, dynamic> map, {
     List<ServicioItemModel> servicios = const [],
-  }) {
-    return ReciboModel(
-      id: map['id'] as int?,
-      numeroRecibo: map['numero_recibo'] as int,
-      propietarioId: map['propietario_id'] as int,
-      inquilinoId: map['inquilino_id'] as int?,
-      domicilioId: map['domicilio_id'] as int?,
-      fechaEmision: map['fecha_emision'] as String,
-      fechaVencimiento: map['fecha_vencimiento'] as String?,
-      montoTotal: (map['monto_total'] as num).toDouble(),
-      montoAbonado: (map['monto_abonado'] as num).toDouble(),
-      saldo: (map['saldo'] as num).toDouble(),
-      estado: map['estado'] as String,
-      usuario: map['usuario'] as String?,
-      notas: map['notas'] as String?,
-      createdAt: map['created_at'] as String,
-      propietarioNombre: map['propietario_nombre'] as String?,
-      propietarioTelefono: map['propietario_telefono'] as String?,
-      propietarioEmail: map['propietario_email'] as String?,
-      inquilinoNombre: map['inquilino_nombre'] as String?,
-      inquilinoTelefono: map['inquilino_telefono'] as String?,
-      direccion: map['direccion'] as String?,
-      localidad: map['localidad'] as String?,
-      servicios: servicios,
-    );
-  }
+  }) =>
+      ReciboModel(
+        id: map['id'] as int?,
+        numeroRecibo: map['numero_recibo'] as int,
+        propietarioId: map['propietario_id'] as int,
+        inquilinoId: map['inquilino_id'] as int?,
+        domicilioId: map['domicilio_id'] as int?,
+        fechaEmision: map['fecha_emision'] as String,
+        fechaVencimiento: map['fecha_vencimiento'] as String?,
+        montoTotal: (map['monto_total'] as num).toDouble(),
+        montoAbonado: (map['monto_abonado'] as num).toDouble(),
+        saldo: (map['saldo'] as num).toDouble(),
+        estado: map['estado'] as String,
+        usuario: map['usuario'] as String?,
+        notas: map['notas'] as String?,
+        createdAt: map['created_at'] as String,
+        contratoId: map['contrato_id'] as int?,
+        numeroCuota: map['numero_cuota'] as int?,
+        propietarioNombre: map['propietario_nombre'] as String?,
+        propietarioTelefono: map['propietario_telefono'] as String?,
+        propietarioEmail: map['propietario_email'] as String?,
+        inquilinoNombre: map['inquilino_nombre'] as String?,
+        inquilinoTelefono: map['inquilino_telefono'] as String?,
+        direccion: map['direccion'] as String?,
+        localidad: map['localidad'] as String?,
+        servicios: servicios,
+      );
 
   ReciboModel copyWith({
     int? id,
@@ -117,6 +122,8 @@ class ReciboModel {
     String? usuario,
     String? notas,
     String? createdAt,
+    int? contratoId,
+    int? numeroCuota,
     String? propietarioNombre,
     String? propietarioTelefono,
     String? propietarioEmail,
@@ -125,34 +132,34 @@ class ReciboModel {
     String? direccion,
     String? localidad,
     List<ServicioItemModel>? servicios,
-  }) {
-    return ReciboModel(
-      id: id ?? this.id,
-      numeroRecibo: numeroRecibo ?? this.numeroRecibo,
-      propietarioId: propietarioId ?? this.propietarioId,
-      inquilinoId: inquilinoId ?? this.inquilinoId,
-      domicilioId: domicilioId ?? this.domicilioId,
-      fechaEmision: fechaEmision ?? this.fechaEmision,
-      fechaVencimiento: fechaVencimiento ?? this.fechaVencimiento,
-      montoTotal: montoTotal ?? this.montoTotal,
-      montoAbonado: montoAbonado ?? this.montoAbonado,
-      saldo: saldo ?? this.saldo,
-      estado: estado ?? this.estado,
-      usuario: usuario ?? this.usuario,
-      notas: notas ?? this.notas,
-      createdAt: createdAt ?? this.createdAt,
-      propietarioNombre: propietarioNombre ?? this.propietarioNombre,
-      propietarioTelefono: propietarioTelefono ?? this.propietarioTelefono,
-      propietarioEmail: propietarioEmail ?? this.propietarioEmail,
-      inquilinoNombre: inquilinoNombre ?? this.inquilinoNombre,
-      inquilinoTelefono: inquilinoTelefono ?? this.inquilinoTelefono,
-      direccion: direccion ?? this.direccion,
-      localidad: localidad ?? this.localidad,
-      servicios: servicios ?? this.servicios,
-    );
-  }
+  }) =>
+      ReciboModel(
+        id: id ?? this.id,
+        numeroRecibo: numeroRecibo ?? this.numeroRecibo,
+        propietarioId: propietarioId ?? this.propietarioId,
+        inquilinoId: inquilinoId ?? this.inquilinoId,
+        domicilioId: domicilioId ?? this.domicilioId,
+        fechaEmision: fechaEmision ?? this.fechaEmision,
+        fechaVencimiento: fechaVencimiento ?? this.fechaVencimiento,
+        montoTotal: montoTotal ?? this.montoTotal,
+        montoAbonado: montoAbonado ?? this.montoAbonado,
+        saldo: saldo ?? this.saldo,
+        estado: estado ?? this.estado,
+        usuario: usuario ?? this.usuario,
+        notas: notas ?? this.notas,
+        createdAt: createdAt ?? this.createdAt,
+        contratoId: contratoId ?? this.contratoId,
+        numeroCuota: numeroCuota ?? this.numeroCuota,
+        propietarioNombre: propietarioNombre ?? this.propietarioNombre,
+        propietarioTelefono: propietarioTelefono ?? this.propietarioTelefono,
+        propietarioEmail: propietarioEmail ?? this.propietarioEmail,
+        inquilinoNombre: inquilinoNombre ?? this.inquilinoNombre,
+        inquilinoTelefono: inquilinoTelefono ?? this.inquilinoTelefono,
+        direccion: direccion ?? this.direccion,
+        localidad: localidad ?? this.localidad,
+        servicios: servicios ?? this.servicios,
+      );
 
-  /// Color del estado para la UI
   String get estadoLabel {
     switch (estado) {
       case 'pagado':

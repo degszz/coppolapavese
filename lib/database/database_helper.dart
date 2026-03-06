@@ -32,11 +32,16 @@ class DatabaseHelper {
 
     return await openDatabase(
       dbPath,
-      version: 1,
+      version: 4, // v4: conceptos_regulares columnas extendidas
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade,
       onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'),
     );
   }
+
+  // ════════════════════════════════════════════════════════════════
+  // CREACIÓN INICIAL (versión 1 + tablas nuevas de v2)
+  // ════════════════════════════════════════════════════════════════
 
   Future<void> _onCreate(Database db, int version) async {
     // ── PROPIETARIOS ──────────────────────────────────────────────
@@ -113,6 +118,183 @@ class DatabaseHelper {
         total       REAL NOT NULL DEFAULT 0,
         FOREIGN KEY (recibo_id) REFERENCES recibos(id)
           ON DELETE CASCADE
+      )
+    ''');
+
+    // tablas v2
+    await _crearTablasV2(db);
+    // tablas v3
+    await _migrarV3(db);
+    // tablas v4
+    await _migrarV4(db);
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // NUEVO — MIGRACIÓN: v1 → v2 (no pierde datos existentes)
+  // ════════════════════════════════════════════════════════════════
+
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await _crearTablasV2(db);
+    }
+    if (oldVersion < 3) {
+      await _migrarV3(db);
+    }
+    if (oldVersion < 4) {
+      await _migrarV4(db);
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // MIGRACIÓN v4 — conceptos_regulares columnas extendidas
+  // ════════════════════════════════════════════════════════════════
+  Future<void> _migrarV4(Database db) async {
+    for (final col in [
+      'claro INTEGER DEFAULT 1',
+      'recordar_pago INTEGER DEFAULT 0',
+      'fecha_inicio TEXT',
+      'fecha_fin TEXT',
+      'periodo_tipo TEXT DEFAULT \'todos\'',
+      'meses TEXT',
+      'entregar_comprobante_prop INTEGER DEFAULT 0',
+    ]) {
+      try {
+        await db.execute('ALTER TABLE conceptos_regulares ADD COLUMN $col');
+      } catch (_) {}
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // MIGRACIÓN v3 — propiedades, periodos_fijos + columnas nuevas
+  // ════════════════════════════════════════════════════════════════
+  Future<void> _migrarV3(Database db) async {
+    // Nueva tabla propiedades
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS propiedades (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        carpeta        TEXT,
+        tipo           TEXT NOT NULL DEFAULT 'Vivienda',
+        estado         TEXT NOT NULL DEFAULT 'Disponible',
+        direccion      TEXT NOT NULL,
+        entre_calles   TEXT,
+        provincia      TEXT,
+        localidad      TEXT,
+        barrio         TEXT,
+        codigo_postal  TEXT,
+        propietario_id INTEGER,
+        FOREIGN KEY (propietario_id) REFERENCES propietarios(id) ON DELETE SET NULL
+      )
+    ''');
+
+    // Nueva tabla periodos_fijos
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS periodos_fijos (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        contrato_id  INTEGER NOT NULL,
+        cuota_desde  INTEGER NOT NULL,
+        cuota_hasta  INTEGER NOT NULL,
+        monto        REAL    NOT NULL DEFAULT 0,
+        FOREIGN KEY (contrato_id) REFERENCES contratos(id) ON DELETE CASCADE
+      )
+    ''');
+
+    // ALTER TABLE inquilinos — campos adicionales del inquilino
+    for (final col in [
+      'apellido TEXT',
+      'domicilio TEXT',
+      'localidad_inq TEXT',
+      'provincia TEXT',
+      'celular TEXT',
+      'telefono_alternativo TEXT',
+      'email TEXT',
+    ]) {
+      try {
+        await db.execute('ALTER TABLE inquilinos ADD COLUMN $col');
+      } catch (_) {} // ignora si ya existe
+    }
+
+    // ALTER TABLE contratos — datos del contrato ampliado
+    for (final col in [
+      'propiedad_id INTEGER',
+      'fecha_inicio TEXT',
+      'cuotas_total INTEGER DEFAULT 0',
+      'fecha_fin TEXT',
+      'alquiler_primer_periodo REAL DEFAULT 0',
+      'hasta_cuota INTEGER DEFAULT 0',
+      'extras REAL DEFAULT 0',
+      'primer_dia_pago INTEGER DEFAULT 1',
+      'pago_final INTEGER DEFAULT 10',
+      'punitorios_porcentaje REAL DEFAULT 0',
+      'punitorios_fijos REAL DEFAULT 0',
+      'rescindido INTEGER DEFAULT 0',
+      'fecha_rescision TEXT',
+    ]) {
+      try {
+        await db.execute('ALTER TABLE contratos ADD COLUMN $col');
+      } catch (_) {}
+    }
+
+    // ALTER TABLE recibos — referencia al contrato y número de cuota
+    for (final col in [
+      'contrato_id INTEGER',
+      'numero_cuota INTEGER',
+    ]) {
+      try {
+        await db.execute('ALTER TABLE recibos ADD COLUMN $col');
+      } catch (_) {}
+    }
+
+    // ALTER TABLE servicios_recibo — fecha de vencimiento por ítem
+    try {
+      await db.execute('ALTER TABLE servicios_recibo ADD COLUMN fecha_vence TEXT');
+    } catch (_) {}
+  }
+
+  /// Crea las tablas contratos y conceptos_regulares
+  Future<void> _crearTablasV2(Database db) async {
+    // ── CONTRATOS ─────────────────────────────────────────────────
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS contratos (
+        id                               INTEGER PRIMARY KEY AUTOINCREMENT,
+        recibo_id                        INTEGER,
+        inquilino_id                     INTEGER,
+        propietario_id                   INTEGER NOT NULL,
+        dias_gracia                      INTEGER NOT NULL DEFAULT 10,
+        punitorios_desde_dia             INTEGER NOT NULL DEFAULT 1,
+        fecha_alta                       TEXT,
+        notas_recibo                     TEXT,
+        recordatorio_inquilino           TEXT DEFAULT
+          'Recuerde que el contrato de alquiler está próximo a vencer',
+        recordatorio_propietario         TEXT DEFAULT
+          'Recuerde que el contrato de alquiler de la calle [domicilio] está próximo a vencer',
+        alertar_inquilino                INTEGER NOT NULL DEFAULT 1,
+        imprimir_recordatorio_inquilino  INTEGER NOT NULL DEFAULT 1,
+        alertar_propietario              INTEGER NOT NULL DEFAULT 1,
+        imprimir_recordatorio_propietario INTEGER NOT NULL DEFAULT 1,
+        FOREIGN KEY (recibo_id)       REFERENCES recibos(id)      ON DELETE SET NULL,
+        FOREIGN KEY (inquilino_id)    REFERENCES inquilinos(id)   ON DELETE SET NULL,
+        FOREIGN KEY (propietario_id)  REFERENCES propietarios(id) ON DELETE CASCADE
+      )
+    ''');
+
+    // ── CONCEPTOS_REGULARES ───────────────────────────────────────
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS conceptos_regulares (
+        id                          INTEGER PRIMARY KEY AUTOINCREMENT,
+        contrato_id                 INTEGER NOT NULL,
+        descripcion                 TEXT,
+        monto                       REAL NOT NULL DEFAULT 0,
+        porcentual                  REAL NOT NULL DEFAULT 0.0,
+        tiene_comprobante           INTEGER NOT NULL DEFAULT 0,
+        tipo                        TEXT NOT NULL DEFAULT 'regular',
+        fecha_vence                 TEXT,
+        efecto_inquilino            TEXT NOT NULL DEFAULT 'sin_efecto',
+        aplica_punitorios_inquilino INTEGER NOT NULL DEFAULT 0,
+        efecto_propietario          TEXT NOT NULL DEFAULT 'sin_efecto',
+        aplica_administracion       INTEGER NOT NULL DEFAULT 0,
+        aplica_todos                INTEGER NOT NULL DEFAULT 1,
+        propietario_especifico      TEXT,
+        FOREIGN KEY (contrato_id) REFERENCES contratos(id) ON DELETE CASCADE
       )
     ''');
   }
@@ -345,6 +527,12 @@ class DatabaseHelper {
 
   Future<int> eliminarRecibo(int id) async {
     final db = await database;
+    // Borrar servicios asociados primero
+    await db.delete(
+      'servicios_recibo',
+      where: 'recibo_id = ?',
+      whereArgs: [id],
+    );
     return await db.delete(
       'recibos',
       where: 'id = ?',
@@ -386,6 +574,178 @@ class DatabaseHelper {
       'servicios_recibo',
       where: 'recibo_id = ?',
       whereArgs: [reciboId],
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // NUEVO — CONTRATOS — CRUD
+  // ════════════════════════════════════════════════════════════════
+
+  Future<int> insertarContrato(Map<String, dynamic> data) async {
+    final db = await database;
+    return await db.insert('contratos', data);
+  }
+
+  Future<List<Map<String, dynamic>>> obtenerContratos() async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT
+        c.*,
+        p.nombre AS propietario_nombre,
+        i.nombre AS inquilino_nombre
+      FROM contratos c
+      LEFT JOIN propietarios p ON c.propietario_id = p.id
+      LEFT JOIN inquilinos   i ON c.inquilino_id   = i.id
+      ORDER BY c.fecha_alta DESC
+    ''');
+  }
+
+  Future<Map<String, dynamic>?> obtenerContratoPorId(int id) async {
+    final db = await database;
+    final result = await db.rawQuery('''
+      SELECT
+        c.*,
+        p.nombre   AS propietario_nombre,
+        i.nombre   AS inquilino_nombre,
+        d.direccion,
+        d.localidad
+      FROM contratos c
+      LEFT JOIN propietarios p ON c.propietario_id = p.id
+      LEFT JOIN inquilinos   i ON c.inquilino_id   = i.id
+      LEFT JOIN domicilios   d ON d.propietario_id = c.propietario_id
+      WHERE c.id = ?
+      LIMIT 1
+    ''', [id]);
+    return result.isNotEmpty ? result.first : null;
+  }
+
+  Future<Map<String, dynamic>?> obtenerContratoPorPropietario(
+      int propietarioId) async {
+    final db = await database;
+    final result = await db.rawQuery('''
+      SELECT
+        c.*,
+        p.nombre   AS propietario_nombre,
+        i.nombre   AS inquilino_nombre,
+        d.direccion,
+        d.localidad
+      FROM contratos c
+      LEFT JOIN propietarios p ON c.propietario_id = p.id
+      LEFT JOIN inquilinos   i ON c.inquilino_id   = i.id
+      LEFT JOIN domicilios   d ON d.propietario_id = c.propietario_id
+      WHERE c.propietario_id = ?
+      ORDER BY c.id DESC
+      LIMIT 1
+    ''', [propietarioId]);
+    return result.isNotEmpty ? result.first : null;
+  }
+
+  Future<Map<String, dynamic>?> obtenerContratoPorRecibo(int reciboId) async {
+    final db = await database;
+    final result = await db.query(
+      'contratos',
+      where: 'recibo_id = ?',
+      whereArgs: [reciboId],
+    );
+    return result.isNotEmpty ? result.first : null;
+  }
+
+  Future<int> actualizarContrato(int id, Map<String, dynamic> data) async {
+    final db = await database;
+    return await db.update(
+      'contratos',
+      data,
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<int> eliminarContrato(int id) async {
+    final db = await database;
+    return await db.delete(
+      'contratos',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // NUEVO — CONCEPTOS_REGULARES — CRUD
+  // ════════════════════════════════════════════════════════════════
+
+  Future<int> insertarConcepto(Map<String, dynamic> data) async {
+    final db = await database;
+    return await db.insert('conceptos_regulares', data);
+  }
+
+  Future<List<Map<String, dynamic>>> obtenerConceptosPorContrato(
+      int contratoId) async {
+    final db = await database;
+    return await db.query(
+      'conceptos_regulares',
+      where: 'contrato_id = ?',
+      whereArgs: [contratoId],
+      orderBy: 'id ASC',
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> obtenerConceptosRegularesPorContrato(
+      int contratoId) async {
+    final db = await database;
+    return await db.query(
+      'conceptos_regulares',
+      where: 'contrato_id = ? AND tipo = ?',
+      whereArgs: [contratoId, 'regular'],
+      orderBy: 'id ASC',
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> obtenerConceptosUnicosPorContrato(
+      int contratoId) async {
+    final db = await database;
+    return await db.query(
+      'conceptos_regulares',
+      where: 'contrato_id = ? AND tipo = ?',
+      whereArgs: [contratoId, 'unico'],
+      orderBy: 'fecha_vence ASC',
+    );
+  }
+
+  Future<Map<String, dynamic>?> obtenerConceptoPorId(int id) async {
+    final db = await database;
+    final result = await db.query(
+      'conceptos_regulares',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    return result.isNotEmpty ? result.first : null;
+  }
+
+  Future<int> actualizarConcepto(int id, Map<String, dynamic> data) async {
+    final db = await database;
+    return await db.update(
+      'conceptos_regulares',
+      data,
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<int> eliminarConcepto(int id) async {
+    final db = await database;
+    return await db.delete(
+      'conceptos_regulares',
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  Future<void> eliminarConceptosPorContrato(int contratoId) async {
+    final db = await database;
+    await db.delete(
+      'conceptos_regulares',
+      where: 'contrato_id = ?',
+      whereArgs: [contratoId],
     );
   }
 
@@ -441,19 +801,21 @@ class DatabaseHelper {
         ) ??
         0;
 
-    final cobradoMes = (await db.rawQuery(
+    final cobradoMes = ((await db.rawQuery(
       'SELECT COALESCE(SUM(monto_abonado), 0) AS total FROM recibos '
       'WHERE fecha_emision BETWEEN ? AND ?',
       [primerDiaMes, ultimoDiaMesStr],
     ))
-        .first['total'] as double? ??
+            .first['total'] as num?)
+        ?.toDouble() ??
         0.0;
 
-    final pendienteTotal = (await db.rawQuery(
+    final pendienteTotal = ((await db.rawQuery(
       "SELECT COALESCE(SUM(saldo), 0) AS total FROM recibos "
       "WHERE estado IN ('pendiente', 'parcial')",
     ))
-        .first['total'] as double? ??
+            .first['total'] as num?)
+        ?.toDouble() ??
         0.0;
 
     return {
@@ -462,6 +824,26 @@ class DatabaseHelper {
       'cobrado_mes': cobradoMes,
       'pendiente_total': pendienteTotal,
     };
+  }
+
+  /// Recibos pendientes o parciales (todas las fechas) con datos del propietario
+  Future<List<Map<String, dynamic>>> obtenerRecibosPendientes() async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT
+        r.*,
+        p.nombre   AS propietario_nombre,
+        p.telefono AS propietario_telefono,
+        i.nombre   AS inquilino_nombre,
+        d.direccion,
+        d.localidad
+      FROM recibos r
+      LEFT JOIN propietarios p ON r.propietario_id = p.id
+      LEFT JOIN inquilinos   i ON r.inquilino_id   = i.id
+      LEFT JOIN domicilios   d ON r.domicilio_id   = d.id
+      WHERE r.estado IN ('pendiente', 'parcial')
+      ORDER BY r.fecha_emision ASC
+    ''');
   }
 
   /// Todos los recibos con filtros opcionales para Excel
@@ -512,5 +894,174 @@ class DatabaseHelper {
       GROUP BY r.id
       ORDER BY r.fecha_emision DESC
     ''', args);
+  }
+
+  // NUEVO — Recibos con info de contrato y conceptos para detalle propietario
+  Future<List<Map<String, dynamic>>> obtenerRecibosConExtras(
+      int propietarioId) async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT
+        r.*,
+        p.nombre  AS propietario_nombre,
+        i.nombre  AS inquilino_nombre,
+        d.direccion,
+        d.localidad,
+        c.id      AS contrato_id,
+        c.notas_recibo,
+        c.alertar_inquilino,
+        c.alertar_propietario,
+        (SELECT COUNT(*) FROM conceptos_regulares cr WHERE cr.contrato_id = c.id) AS cantidad_conceptos
+      FROM recibos r
+      LEFT JOIN propietarios p ON r.propietario_id = p.id
+      LEFT JOIN inquilinos   i ON r.inquilino_id   = i.id
+      LEFT JOIN domicilios   d ON r.domicilio_id   = d.id
+      LEFT JOIN contratos    c ON c.recibo_id      = r.id
+      WHERE r.propietario_id = ?
+      ORDER BY r.fecha_emision DESC
+    ''', [propietarioId]);
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // PROPIEDADES — CRUD
+  // ════════════════════════════════════════════════════════════════
+
+  Future<int> insertarPropiedad(Map<String, dynamic> data) async {
+    final db = await database;
+    return await db.insert('propiedades', data);
+  }
+
+  Future<List<Map<String, dynamic>>> obtenerPropiedades() async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT pr.*, p.nombre AS propietario_nombre
+      FROM propiedades pr
+      LEFT JOIN propietarios p ON pr.propietario_id = p.id
+      ORDER BY pr.direccion ASC
+    ''');
+  }
+
+  Future<List<Map<String, dynamic>>> obtenerPropiedadesPorPropietario(
+      int propietarioId) async {
+    final db = await database;
+    return await db.query(
+      'propiedades',
+      where: 'propietario_id = ?',
+      whereArgs: [propietarioId],
+      orderBy: 'direccion ASC',
+    );
+  }
+
+  Future<Map<String, dynamic>?> obtenerPropiedadPorId(int id) async {
+    final db = await database;
+    final result = await db.rawQuery('''
+      SELECT pr.*, p.nombre AS propietario_nombre
+      FROM propiedades pr
+      LEFT JOIN propietarios p ON pr.propietario_id = p.id
+      WHERE pr.id = ?
+    ''', [id]);
+    return result.isNotEmpty ? result.first : null;
+  }
+
+  Future<int> actualizarPropiedad(int id, Map<String, dynamic> data) async {
+    final db = await database;
+    return await db.update('propiedades', data, where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<int> eliminarPropiedad(int id) async {
+    final db = await database;
+    return await db.delete('propiedades', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // PERIODOS_FIJOS — CRUD
+  // ════════════════════════════════════════════════════════════════
+
+  Future<void> upsertPeriodosFijos(
+      int contratoId, List<Map<String, dynamic>> periodos) async {
+    final db = await database;
+    await db.delete('periodos_fijos',
+        where: 'contrato_id = ?', whereArgs: [contratoId]);
+    for (final p in periodos) {
+      await db.insert('periodos_fijos', {...p, 'contrato_id': contratoId});
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> obtenerPeriodosPorContrato(
+      int contratoId) async {
+    final db = await database;
+    return await db.query(
+      'periodos_fijos',
+      where: 'contrato_id = ?',
+      whereArgs: [contratoId],
+      orderBy: 'cuota_desde ASC',
+    );
+  }
+
+  Future<void> eliminarPeriodosPorContrato(int contratoId) async {
+    final db = await database;
+    await db.delete('periodos_fijos',
+        where: 'contrato_id = ?', whereArgs: [contratoId]);
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // CONTRATOS — consultas ampliadas v3
+  // ════════════════════════════════════════════════════════════════
+
+  /// Lista todos los contratos con JOIN completo (propiedad + inquilino + propietario)
+  Future<List<Map<String, dynamic>>> obtenerContratosActivos() async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT
+        c.*,
+        pr.direccion      AS propiedad_direccion,
+        pr.localidad      AS propiedad_localidad,
+        pr.tipo           AS propiedad_tipo,
+        i.nombre          AS inquilino_nombre,
+        i.apellido        AS inquilino_apellido,
+        p.nombre          AS propietario_nombre
+      FROM contratos c
+      LEFT JOIN propiedades  pr ON c.propiedad_id  = pr.id
+      LEFT JOIN inquilinos   i  ON c.inquilino_id  = i.id
+      LEFT JOIN propietarios p  ON c.propietario_id = p.id
+      ORDER BY c.id DESC
+    ''');
+  }
+
+  /// Número de cuota siguiente para un contrato (COUNT recibos existentes + 1)
+  Future<int> obtenerNumCuotaParaContrato(int contratoId) async {
+    final db = await database;
+    final result = await db.rawQuery(
+      'SELECT COUNT(*) AS cnt FROM recibos WHERE contrato_id = ?',
+      [contratoId],
+    );
+    final cnt = result.first['cnt'] as int? ?? 0;
+    return cnt + 1;
+  }
+
+  /// Monto del período vigente para una cuota dada
+  Future<double> obtenerMontoPeriodo(int contratoId, int numeroCuota) async {
+    final db = await database;
+    final periodos = await db.query(
+      'periodos_fijos',
+      where: 'contrato_id = ? AND cuota_desde <= ? AND cuota_hasta >= ?',
+      whereArgs: [contratoId, numeroCuota, numeroCuota],
+      limit: 1,
+    );
+    if (periodos.isNotEmpty) {
+      return (periodos.first['monto'] as num).toDouble();
+    }
+    // Fallback: alquiler_primer_periodo del contrato
+    final contrato = await db.query(
+      'contratos',
+      columns: ['alquiler_primer_periodo'],
+      where: 'id = ?',
+      whereArgs: [contratoId],
+      limit: 1,
+    );
+    if (contrato.isNotEmpty) {
+      return (contrato.first['alquiler_primer_periodo'] as num?)?.toDouble() ?? 0.0;
+    }
+    return 0.0;
   }
 }

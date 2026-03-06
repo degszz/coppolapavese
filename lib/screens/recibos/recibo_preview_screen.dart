@@ -55,6 +55,7 @@ class _ReciboPreviewScreenState extends State<ReciboPreviewScreen> {
           SingleChildScrollView(
             padding: const EdgeInsets.all(12),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 // Banner "GUARDADO" si viene de formulario nuevo
                 if (widget.esNuevo)
@@ -88,20 +89,26 @@ class _ReciboPreviewScreenState extends State<ReciboPreviewScreen> {
                     ),
                   ),
 
-                // Recibo en formato papel (carta)
-                Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(4),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.15),
-                        blurRadius: 8,
-                        offset: const Offset(0, 2),
+                // Recibo en formato papel (carta) — ancho acotado para desktop
+                Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 820),
+                    child: Container(
+                      width: double.infinity,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(4),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.15),
+                            blurRadius: 8,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
                       ),
-                    ],
+                      child: ReciboWidget(recibo: widget.recibo),
+                    ),
                   ),
-                  child: ReciboWidget(recibo: widget.recibo),
                 ),
                 const SizedBox(height: 20),
 

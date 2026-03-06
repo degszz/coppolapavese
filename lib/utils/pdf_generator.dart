@@ -1,3 +1,4 @@
+import 'package:flutter/services.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:intl/intl.dart';
@@ -5,76 +6,76 @@ import '../models/recibo_model.dart';
 import 'numero_a_letras.dart';
 
 class PdfGenerator {
-  // Paleta de colores del logo
-  static const _primaryColor = PdfColor.fromInt(0xFFC2185B);
-  static const _darkColor = PdfColor.fromInt(0xFF212121);
-  static const _grayColor = PdfColor.fromInt(0xFF757575);
-  static const _lightGray = PdfColor.fromInt(0xFFF5F5F5);
-  static const _greenColor = PdfColor.fromInt(0xFF2E7D32);
-  static const _blueColor = PdfColor.fromInt(0xFF1565C0);
-  static const _redColor = PdfColor.fromInt(0xFFC62828);
+  // Paleta
+  static const _darkColor     = PdfColor.fromInt(0xFF212121);
+  static const _grayColor     = PdfColor.fromInt(0xFF757575);
+  static const _lightGray     = PdfColor.fromInt(0xFFF5F5F5);
+  static const _greenColor    = PdfColor.fromInt(0xFF2E7D32);
+  static const _blueColor     = PdfColor.fromInt(0xFF1565C0);
+  static const _redColor      = PdfColor.fromInt(0xFFC62828);
 
-  static Future<List<int>> generarRecibo(ReciboModel recibo) async {
+  // Datos de la empresa (constantes)
+  static const _empresa        = 'COPPOLA PAVESE Inmobiliaria';
+  static const _direccionEmpresa = 'Blandengues 188 - San Miguel del Monte - Buenos Aires';
+  static const _telefonos      = '02226546317 / 02271412950';
+  static const _emailEmpresa   = 'coppolapavese@gmail.com';
+
+  static Future<List<int>> generarRecibo(
+    ReciboModel recibo, {
+    bool sinPunitorios = false,
+    bool tieneConceptosConComprobante = false,
+  }) async {
     final pdf = pw.Document();
 
-    final fmt = DateFormat('dd/MM/yyyy');
-    final fmtMonto = NumberFormat.currency(
-        locale: 'es_AR', symbol: '\$', decimalDigits: 2);
-
-    String fechaEmision = recibo.fechaEmision;
-    String fechaVencimiento = recibo.fechaVencimiento ?? '';
-    try {
-      fechaEmision = fmt.format(DateTime.parse(recibo.fechaEmision));
-    } catch (_) {}
-    try {
-      if (fechaVencimiento.isNotEmpty) {
-        fechaVencimiento =
-            fmt.format(DateTime.parse(recibo.fechaVencimiento!));
-      }
-    } catch (_) {}
+    final fmt      = DateFormat('dd/MM/yyyy');
+    final fmtMonto = NumberFormat.currency(locale: 'es_AR', symbol: '\$', decimalDigits: 2);
 
     final montoLetras = numeroALetras(recibo.montoTotal);
+
+    // Cargar logo
+    pw.MemoryImage? logoImg;
+    try {
+      final logoData = await rootBundle.load('assets/images/logo.png');
+      logoImg = pw.MemoryImage(logoData.buffer.asUint8List());
+    } catch (_) {}
+
+    // Detectar sin punitorios
+    final esSinPunitorios = sinPunitorios ||
+        (recibo.servicios.isNotEmpty && recibo.servicios.every((s) => s.punitorios == 0));
+
+    final tieneNotas = recibo.notas != null && recibo.notas!.trim().isNotEmpty;
 
     pdf.addPage(
       pw.Page(
         pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(32),
-        build: (pw.Context context) {
+        margin: const pw.EdgeInsets.fromLTRB(20, 18, 20, 18),
+        build: (pw.Context ctx) {
           return pw.Column(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
+            crossAxisAlignment: pw.CrossAxisAlignment.stretch,
             children: [
-              // ── ENCABEZADO ──────────────────────────────────────
-              _encabezado(recibo, fechaEmision, fechaVencimiento),
-              _divisor(),
+              // ═══════════════════ ORIGINAL ═══════════════════
+              pw.Expanded(
+                flex: 52,
+                child: _seccionOriginal(
+                  recibo, fmt, fmtMonto, montoLetras,
+                  logoImg: logoImg,
+                  esSinPunitorios: esSinPunitorios,
+                  tieneNotas: tieneNotas,
+                ),
+              ),
 
-              // ── DATOS INQUILINO ─────────────────────────────────
-              _datosInquilino(recibo),
-              _divisor(),
+              // ───────── LÍNEA DE CORTE ─────────
+              _lineaCorte(),
 
-              // ── PÁRRAFO MONTO EN LETRAS ─────────────────────────
-              _parrafoMonto(recibo, montoLetras, fmtMonto),
-              _divisor(),
-
-              // ── TABLA DE SERVICIOS ──────────────────────────────
-              _tablaServicios(recibo, fmtMonto),
-              _divisor(),
-
-              // ── RESUMEN DE PAGO ─────────────────────────────────
-              _resumenPago(recibo, fmtMonto),
-              _divisor(),
-
-              // ── NOTAS ───────────────────────────────────────────
-              _seccionNotas(recibo),
-
-              pw.SizedBox(height: 30),
-
-              // ── FIRMAS ──────────────────────────────────────────
-              _firmas(),
-
-              pw.Spacer(),
-
-              // ── PIE ─────────────────────────────────────────────
-              _pie(),
+              // ═══════════════════ COPIA ═══════════════════
+              pw.Expanded(
+                flex: 48,
+                child: _seccionCopia(
+                  recibo, fmt, fmtMonto, montoLetras,
+                  esSinPunitorios: esSinPunitorios,
+                  tieneNotas: tieneNotas,
+                ),
+              ),
             ],
           );
         },
@@ -84,526 +85,568 @@ class PdfGenerator {
     return pdf.save();
   }
 
-  // ── ENCABEZADO ─────────────────────────────────────────────────
-  static pw.Widget _encabezado(
-      ReciboModel recibo, String fechaEmision, String fechaVencimiento) {
-    return pw.Column(
-      crossAxisAlignment: pw.CrossAxisAlignment.start,
-      children: [
-        // Marca ES COPIA centrada
-        pw.Center(
-          child: pw.Container(
-            padding: const pw.EdgeInsets.symmetric(horizontal: 20, vertical: 4),
-            decoration: pw.BoxDecoration(
-              border: pw.Border.all(color: _primaryColor, width: 1.5),
-              borderRadius: const pw.BorderRadius.all(pw.Radius.circular(3)),
-            ),
-            child: pw.Text(
-              'ES COPIA',
-              style: pw.TextStyle(
-                color: _primaryColor,
-                fontWeight: pw.FontWeight.bold,
-                fontSize: 12,
-                letterSpacing: 3,
-              ),
-            ),
-          ),
-        ),
-        pw.SizedBox(height: 10),
+  // ══════════════════════════════════════════════════════════════
+  // SECCIÓN ORIGINAL
+  // ══════════════════════════════════════════════════════════════
+  static pw.Widget _seccionOriginal(
+    ReciboModel recibo,
+    DateFormat fmt,
+    NumberFormat fmtMonto,
+    String montoLetras, {
+    pw.MemoryImage? logoImg,
+    bool esSinPunitorios = false,
+    bool tieneNotas = false,
+  }) {
+    final locatario = recibo.inquilinoNombre ?? '—';
+    final locador   = recibo.propietarioNombre ?? '—';
+    final dir       = recibo.direccionCompleta.isNotEmpty
+        ? recibo.direccionCompleta.toUpperCase()
+        : '___________';
+    String fechaStr = recibo.fechaEmision;
+    try { fechaStr = fmt.format(DateTime.parse(recibo.fechaEmision)); } catch (_) {}
 
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+      children: [
+        // ── CABECERA ──────────────────────────────────────────
         pw.Row(
-          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
-            // Logo / nombre inmobiliaria
-            pw.Column(
-              crossAxisAlignment: pw.CrossAxisAlignment.start,
-              children: [
-                pw.Text(
-                  'COPPOLA PAVESE',
-                  style: pw.TextStyle(
-                    color: _primaryColor,
-                    fontWeight: pw.FontWeight.bold,
-                    fontSize: 16,
-                    letterSpacing: 1,
-                  ),
-                ),
-                pw.Text(
-                  'INMOBILIARIA',
-                  style: pw.TextStyle(
-                    color: _darkColor,
-                    fontSize: 10,
-                    letterSpacing: 2,
-                  ),
-                ),
-              ],
+            // Logo + datos empresa
+            if (logoImg != null)
+              pw.Image(logoImg, width: 36, height: 36),
+            if (logoImg != null) pw.SizedBox(width: 6),
+            pw.Expanded(
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  pw.Text(_empresa,
+                      style: pw.TextStyle(
+                          fontWeight: pw.FontWeight.bold,
+                          fontSize: 9,
+                          color: _darkColor)),
+                  pw.Text(_direccionEmpresa,
+                      style: pw.TextStyle(fontSize: 6.5, color: _grayColor)),
+                  pw.Text('$_telefonos   $_emailEmpresa',
+                      style: pw.TextStyle(fontSize: 6.5, color: _grayColor)),
+                ],
+              ),
             ),
-            // N° de recibo
+            // Badge X + ORIGINAL + datos recibo
             pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.end,
               children: [
-                pw.Text(
-                  'RECIBO DE ALQUILER',
-                  style: pw.TextStyle(
-                    color: _darkColor,
-                    fontWeight: pw.FontWeight.bold,
-                    fontSize: 12,
-                  ),
+                pw.Row(
+                  children: [
+                    // Badge "X DOCUMENTO NO VALIDO COMO FACTURA"
+                    pw.Container(
+                      padding: const pw.EdgeInsets.symmetric(
+                          horizontal: 5, vertical: 2),
+                      decoration: pw.BoxDecoration(
+                        border: pw.Border.all(
+                            color: _darkColor, width: 0.8),
+                      ),
+                      child: pw.Text(
+                        'X  DOCUMENTO NO VALIDO COMO FACTURA',
+                        style: pw.TextStyle(
+                            fontSize: 5.5,
+                            fontWeight: pw.FontWeight.bold,
+                            color: _darkColor),
+                      ),
+                    ),
+                    pw.SizedBox(width: 6),
+                    pw.Container(
+                      padding: const pw.EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 2),
+                      decoration: pw.BoxDecoration(
+                        border: pw.Border.all(color: _darkColor),
+                      ),
+                      child: pw.Text(
+                        'ORIGINAL',
+                        style: pw.TextStyle(
+                            fontSize: 9,
+                            fontWeight: pw.FontWeight.bold,
+                            color: _darkColor),
+                      ),
+                    ),
+                  ],
                 ),
-                pw.Text(
-                  'N° ${recibo.numeroRecibo.toString().padLeft(4, '0')}',
-                  style: pw.TextStyle(
-                    color: _primaryColor,
-                    fontWeight: pw.FontWeight.bold,
-                    fontSize: 20,
-                  ),
-                ),
+                pw.SizedBox(height: 3),
+                _miniInfoFila('Recibo:', '${recibo.numeroRecibo}'),
+                _miniInfoFila('Fecha:', fechaStr),
+                if (recibo.usuario != null && recibo.usuario!.isNotEmpty)
+                  _miniInfoFila('Usuario:', recibo.usuario!),
               ],
             ),
           ],
         ),
-        pw.SizedBox(height: 6),
-
-        pw.Row(
-          mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-          children: [
-            _infoFila('Fecha:', fechaEmision),
-            if (recibo.usuario != null && recibo.usuario!.isNotEmpty)
-              _infoFila('Responsable:', recibo.usuario!),
-          ],
-        ),
-        if (fechaVencimiento.isNotEmpty)
-          _infoFila('Vencimiento:', fechaVencimiento),
-        pw.SizedBox(height: 8),
-      ],
-    );
-  }
-
-  // ── DATOS INQUILINO ────────────────────────────────────────────
-  static pw.Widget _datosInquilino(ReciboModel recibo) {
-    return pw.Column(
-      crossAxisAlignment: pw.CrossAxisAlignment.start,
-      children: [
-        pw.SizedBox(height: 8),
-        _tituloSeccion('DATOS DEL LOCATARIO'),
         pw.SizedBox(height: 5),
-        if (recibo.inquilinoNombre != null &&
-            recibo.inquilinoNombre!.isNotEmpty)
-          _infoFila('Inquilino:', recibo.inquilinoNombre!),
-        if (recibo.direccionCompleta.isNotEmpty)
-          _infoFila('Domicilio:', recibo.direccionCompleta),
-        if (recibo.propietarioNombre != null &&
-            recibo.propietarioNombre!.isNotEmpty)
-          _infoFila('Propietario:', recibo.propietarioNombre!),
-        pw.SizedBox(height: 8),
-      ],
-    );
-  }
 
-  // ── PÁRRAFO MONTO EN LETRAS ────────────────────────────────────
-  static pw.Widget _parrafoMonto(
-      ReciboModel recibo, String montoLetras, NumberFormat fmt) {
-    return pw.Column(
-      crossAxisAlignment: pw.CrossAxisAlignment.start,
-      children: [
-        pw.SizedBox(height: 8),
-        _tituloSeccion('CONCEPTO'),
-        pw.SizedBox(height: 6),
-        pw.Container(
-          width: double.infinity,
-          padding: const pw.EdgeInsets.all(10),
-          decoration: pw.BoxDecoration(
-            color: const PdfColor.fromInt(0xFFFFF8F9),
-            border: pw.Border.all(
-                color: const PdfColor.fromInt(0xFFEECDD5)),
-            borderRadius:
-                const pw.BorderRadius.all(pw.Radius.circular(4)),
-          ),
-          child: pw.RichText(
-            text: pw.TextSpan(
+        // ── TÍTULO ────────────────────────────────────────────
+        _barraLinea(),
+        pw.Center(
+          child: pw.Padding(
+            padding: const pw.EdgeInsets.symmetric(vertical: 3),
+            child: pw.Text(
+              'RECIBO POR CUENTA Y ORDEN DE TERCEROS',
               style: pw.TextStyle(
-                  fontSize: 11,
+                  fontWeight: pw.FontWeight.bold,
+                  fontSize: 9,
                   color: _darkColor,
-                  lineSpacing: 4),
-              children: [
-                const pw.TextSpan(
-                  text:
-                      'POR MANDATO DEL LOCADOR RECIBI DEL LOCATARIO LA SUMA DE ',
-                ),
-                pw.TextSpan(
-                  text: montoLetras,
-                  style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                ),
-                pw.TextSpan(
-                  text: ' (${fmt.format(recibo.montoTotal)})',
-                  style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                ),
-                const pw.TextSpan(
-                  text:
-                      ' POR EL ALQUILER DE UNA PROPIEDAD UBICADA EN ',
-                ),
-                pw.TextSpan(
-                  text: recibo.direccionCompleta.isNotEmpty
-                      ? recibo.direccionCompleta.toUpperCase()
-                      : '____________________',
-                  style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-                ),
-                const pw.TextSpan(text: '.'),
-              ],
+                  letterSpacing: 1),
             ),
           ),
         ),
-        pw.SizedBox(height: 8),
-      ],
-    );
-  }
+        _barraLinea(),
+        pw.SizedBox(height: 4),
 
-  // ── TABLA SERVICIOS ────────────────────────────────────────────
-  static pw.Widget _tablaServicios(ReciboModel recibo, NumberFormat fmt) {
-    return pw.Column(
-      crossAxisAlignment: pw.CrossAxisAlignment.start,
-      children: [
-        pw.SizedBox(height: 8),
-        _tituloSeccion('DETALLE DE SERVICIOS'),
-        pw.SizedBox(height: 6),
-        pw.Table(
-          columnWidths: {
-            0: const pw.FlexColumnWidth(4),
-            1: const pw.FlexColumnWidth(2),
-            2: const pw.FlexColumnWidth(2),
-            3: const pw.FlexColumnWidth(2),
-          },
+        // ── LOCADOR / LOCATARIO ───────────────────────────────
+        pw.Row(
           children: [
-            // Encabezado
-            pw.TableRow(
-              decoration:
-                  const pw.BoxDecoration(color: _primaryColor),
-              children: [
-                _thPdf('DESCRIPCIÓN'),
-                _thPdf('MONTO', center: true),
-                _thPdf('PUNITORIOS', center: true),
-                _thPdf('TOTAL', center: true),
-              ],
-            ),
-            // Filas de servicios
-            ...recibo.servicios.asMap().entries.map((entry) {
-              final i = entry.key;
-              final s = entry.value;
-              return pw.TableRow(
-                decoration: pw.BoxDecoration(
-                  color:
-                      i % 2 == 0 ? PdfColors.white : _lightGray,
-                ),
+            pw.RichText(
+              text: pw.TextSpan(
+                style: pw.TextStyle(fontSize: 8, color: _darkColor),
                 children: [
-                  _tdPdf(s.descripcion),
-                  _tdPdf(fmt.format(s.monto), center: true),
-                  _tdPdf(
-                    s.punitorios > 0 ? fmt.format(s.punitorios) : '—',
-                    center: true,
-                  ),
-                  _tdPdf(fmt.format(s.total),
-                      center: true, bold: true),
+                  pw.TextSpan(
+                      text: 'LOCADOR: ',
+                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                  pw.TextSpan(text: locador),
                 ],
-              );
-            }),
-            // Fila total
-            pw.TableRow(
-              decoration:
-                  const pw.BoxDecoration(color: _lightGray),
-              children: [
-                _tdPdf('TOTAL', bold: true),
-                _tdPdf('', center: true),
-                _tdPdf('', center: true),
-                _tdPdf(fmt.format(recibo.montoTotal),
-                    center: true,
-                    bold: true,
-                    color: _primaryColor),
-              ],
+              ),
+            ),
+            pw.SizedBox(width: 20),
+            pw.RichText(
+              text: pw.TextSpan(
+                style: pw.TextStyle(fontSize: 8, color: _darkColor),
+                children: [
+                  pw.TextSpan(
+                      text: 'LOCATARIO: ',
+                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                  pw.TextSpan(text: locatario),
+                ],
+              ),
             ),
           ],
         ),
-        pw.SizedBox(height: 8),
-      ],
-    );
-  }
+        pw.SizedBox(height: 5),
 
-  // ── RESUMEN PAGO ───────────────────────────────────────────────
-  static pw.Widget _resumenPago(ReciboModel recibo, NumberFormat fmt) {
-    final colorSaldo =
-        recibo.saldo > 0 ? _redColor : _greenColor;
-    final estadoLabel = recibo.estadoLabel.toUpperCase();
-    final colorEstado = recibo.estado == 'pagado'
-        ? _greenColor
-        : recibo.estado == 'parcial'
-            ? const PdfColor.fromInt(0xFFF57C00)
-            : _redColor;
-
-    return pw.Column(
-      crossAxisAlignment: pw.CrossAxisAlignment.start,
-      children: [
-        pw.SizedBox(height: 8),
-        _tituloSeccion('RESUMEN DE PAGO'),
-        pw.SizedBox(height: 6),
-        pw.Container(
-          decoration: pw.BoxDecoration(
-            border: pw.Border.all(
-                color: const PdfColor.fromInt(0xFFE0E0E0)),
-            borderRadius:
-                const pw.BorderRadius.all(pw.Radius.circular(4)),
-          ),
-          child: pw.Column(
+        // ── PÁRRAFO MONTO ─────────────────────────────────────
+        pw.RichText(
+          text: pw.TextSpan(
+            style: pw.TextStyle(fontSize: 8, color: _darkColor, lineSpacing: 3),
             children: [
-              _filaResumenPdf(
-                'Monto a Abonar:',
-                fmt.format(recibo.montoTotal),
-                _blueColor,
-                fondo: const PdfColor.fromInt(0xFFF5F9FF),
+              const pw.TextSpan(
+                text: 'POR MANDATO DEL LOCADOR RECIBÍ DEL LOCATARIO LA SUMA DE ',
               ),
-              pw.Divider(
-                  height: 1,
-                  color: const PdfColor.fromInt(0xFFE0E0E0)),
-              _filaResumenPdf(
-                'Total Abonado:',
-                fmt.format(recibo.montoAbonado),
-                _greenColor,
-                fondo: const PdfColor.fromInt(0xFFF5FFF7),
-              ),
-              pw.Divider(
-                  height: 1,
-                  color: const PdfColor.fromInt(0xFFE0E0E0)),
-              _filaResumenPdf(
-                'Saldo:',
-                fmt.format(recibo.saldo),
-                colorSaldo,
-                negrita: true,
-                fondo: recibo.saldo > 0
-                    ? const PdfColor.fromInt(0xFFFFF5F5)
-                    : const PdfColor.fromInt(0xFFF5FFF7),
-              ),
+              pw.TextSpan(
+                  text: montoLetras.toUpperCase(),
+                  style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+              pw.TextSpan(
+                  text: ' POR EL ALQUILER DE UNA PROPIEDAD QUE OCUPA EN LA CALLE ',
+                  style: pw.TextStyle(fontWeight: pw.FontWeight.normal)),
+              pw.TextSpan(
+                  text: dir,
+                  style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+              const pw.TextSpan(text: '.'),
             ],
           ),
         ),
+        pw.SizedBox(height: 5),
+
+        // ── TABLA SERVICIOS ───────────────────────────────────
+        _tablaServicios(recibo, fmtMonto, esSinPunitorios: esSinPunitorios),
+        pw.SizedBox(height: 5),
+
+        // ── RESUMEN + NOTAS ───────────────────────────────────
+        pw.Row(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            // Notas lado izquierdo
+            pw.Expanded(
+              child: tieneNotas
+                  ? pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text('Notas',
+                            style: pw.TextStyle(
+                                fontSize: 7,
+                                fontWeight: pw.FontWeight.bold,
+                                color: _grayColor)),
+                        pw.SizedBox(height: 2),
+                        pw.Text(recibo.notas!,
+                            style: pw.TextStyle(
+                                fontSize: 7.5,
+                                color: _darkColor,
+                                fontStyle: pw.FontStyle.italic)),
+                      ],
+                    )
+                  : pw.SizedBox(),
+            ),
+            // Resumen lado derecho
+            _resumenPago(recibo, fmtMonto),
+          ],
+        ),
         pw.SizedBox(height: 6),
+
+        // ── FOOTER ────────────────────────────────────────────
+        pw.Row(
+          mainAxisAlignment: pw.MainAxisAlignment.end,
+          children: [
+            pw.Text(
+              _empresa,
+              style: pw.TextStyle(
+                  fontSize: 8,
+                  fontWeight: pw.FontWeight.bold,
+                  color: _grayColor),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // SECCIÓN COPIA
+  // ══════════════════════════════════════════════════════════════
+  static pw.Widget _seccionCopia(
+    ReciboModel recibo,
+    DateFormat fmt,
+    NumberFormat fmtMonto,
+    String montoLetras, {
+    bool esSinPunitorios = false,
+    bool tieneNotas = false,
+  }) {
+    final locatario = recibo.inquilinoNombre ?? '—';
+    final locador   = recibo.propietarioNombre ?? '—';
+    final dir       = recibo.direccionCompleta.isNotEmpty
+        ? recibo.direccionCompleta.toUpperCase()
+        : '___________';
+    String fechaStr = recibo.fechaEmision;
+    try { fechaStr = fmt.format(DateTime.parse(recibo.fechaEmision)); } catch (_) {}
+
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+      children: [
+        pw.SizedBox(height: 4),
+        // ── CABECERA COPIA ────────────────────────────────────
+        pw.Row(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            // Datos del inquilino (izquierda)
+            pw.Expanded(
+              child: pw.Column(
+                crossAxisAlignment: pw.CrossAxisAlignment.start,
+                children: [
+                  _miniInfoFila('Señor(es):', locatario),
+                  if (recibo.direccionCompleta.isNotEmpty)
+                    _miniInfoFila('Domicilio:', recibo.direccionCompleta),
+                ],
+              ),
+            ),
+            // Badge ES COPIA + datos recibo (derecha)
+            pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.end,
+              children: [
+                pw.Container(
+                  padding: const pw.EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 2),
+                  decoration: pw.BoxDecoration(
+                    border: pw.Border.all(color: _darkColor),
+                  ),
+                  child: pw.Text(
+                    'ES COPIA',
+                    style: pw.TextStyle(
+                        fontSize: 9,
+                        fontWeight: pw.FontWeight.bold,
+                        color: _darkColor),
+                  ),
+                ),
+                pw.SizedBox(height: 2),
+                pw.Row(
+                  mainAxisSize: pw.MainAxisSize.min,
+                  children: [
+                    _miniInfoFila('Recibo:', '${recibo.numeroRecibo}'),
+                    pw.SizedBox(width: 8),
+                    _miniInfoFila('Fecha:', fechaStr),
+                    if (recibo.usuario != null &&
+                        recibo.usuario!.isNotEmpty) ...[
+                      pw.SizedBox(width: 8),
+                      _miniInfoFila('Usuario:', recibo.usuario!),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ],
+        ),
+        pw.SizedBox(height: 5),
+
+        // ── LOCADOR / LOCATARIO ───────────────────────────────
         pw.Row(
           children: [
-            pw.Text('Estado: ',
-                style: pw.TextStyle(
-                    fontWeight: pw.FontWeight.bold, fontSize: 11)),
-            pw.Container(
-              padding: const pw.EdgeInsets.symmetric(
-                  horizontal: 8, vertical: 2),
-              decoration: pw.BoxDecoration(
-                color: PdfColor(colorEstado.red, colorEstado.green,
-                    colorEstado.blue, 0.1),
-                border: pw.Border.all(
-                    color: PdfColor(colorEstado.red, colorEstado.green,
-                        colorEstado.blue, 0.4)),
-                borderRadius: const pw.BorderRadius.all(
-                    pw.Radius.circular(10)),
+            pw.RichText(
+              text: pw.TextSpan(
+                style: pw.TextStyle(fontSize: 7.5, color: _darkColor),
+                children: [
+                  pw.TextSpan(
+                      text: 'LOCADOR: ',
+                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                  pw.TextSpan(text: locador),
+                ],
               ),
-              child: pw.Text(
-                estadoLabel,
-                style: pw.TextStyle(
-                  color: colorEstado,
-                  fontWeight: pw.FontWeight.bold,
-                  fontSize: 10,
-                ),
+            ),
+            pw.SizedBox(width: 16),
+            pw.RichText(
+              text: pw.TextSpan(
+                style: pw.TextStyle(fontSize: 7.5, color: _darkColor),
+                children: [
+                  pw.TextSpan(
+                      text: 'LOCATARIO: ',
+                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+                  pw.TextSpan(text: locatario),
+                ],
               ),
             ),
           ],
         ),
-        pw.SizedBox(height: 8),
-      ],
-    );
-  }
+        pw.SizedBox(height: 4),
 
-  // ── NOTAS ──────────────────────────────────────────────────────
-  static pw.Widget _seccionNotas(ReciboModel recibo) {
-    return pw.Column(
-      crossAxisAlignment: pw.CrossAxisAlignment.start,
-      children: [
-        pw.SizedBox(height: 8),
-        _tituloSeccion('NOTAS'),
-        pw.SizedBox(height: 5),
-        pw.Container(
-          width: double.infinity,
-          padding: const pw.EdgeInsets.all(8),
-          decoration: pw.BoxDecoration(
-            border: pw.Border.all(
-                color: const PdfColor.fromInt(0xFFE0E0E0)),
-            borderRadius:
-                const pw.BorderRadius.all(pw.Radius.circular(4)),
-          ),
-          child: pw.Text(
-            (recibo.notas != null && recibo.notas!.isNotEmpty)
-                ? recibo.notas!
-                : ' ',
-            style:
-                pw.TextStyle(fontSize: 11, color: _darkColor),
+        // ── PÁRRAFO MONTO ─────────────────────────────────────
+        pw.RichText(
+          text: pw.TextSpan(
+            style: pw.TextStyle(fontSize: 7.5, color: _darkColor, lineSpacing: 2.5),
+            children: [
+              const pw.TextSpan(
+                text: 'POR MANDATO DEL LOCADOR RECIBÍ DEL LOCATARIO LA SUMA DE ',
+              ),
+              pw.TextSpan(
+                  text: montoLetras.toUpperCase(),
+                  style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+              const pw.TextSpan(
+                  text: ' POR EL ALQUILER DE UNA PROPIEDAD QUE OCUPA EN LA CALLE '),
+              pw.TextSpan(
+                  text: dir,
+                  style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
+              const pw.TextSpan(text: '.'),
+            ],
           ),
         ),
-      ],
-    );
-  }
+        pw.SizedBox(height: 4),
 
-  // ── FIRMAS ─────────────────────────────────────────────────────
-  static pw.Widget _firmas() {
-    return pw.Row(
-      children: [
-        pw.Expanded(child: _lineaFirmaPdf('Firma Propietario')),
-        pw.SizedBox(width: 40),
-        pw.Expanded(child: _lineaFirmaPdf('Firma Inquilino')),
-      ],
-    );
-  }
-
-  static pw.Widget _lineaFirmaPdf(String label) {
-    return pw.Column(
-      children: [
-        pw.Divider(thickness: 0.8, color: _darkColor),
+        // ── SEGÚN DETALLE ─────────────────────────────────────
+        pw.Text('Según Detalle:',
+            style: pw.TextStyle(
+                fontSize: 7.5,
+                fontWeight: pw.FontWeight.bold,
+                color: _darkColor)),
         pw.SizedBox(height: 3),
-        pw.Text(
-          label,
-          style: pw.TextStyle(fontSize: 9, color: _grayColor),
-          textAlign: pw.TextAlign.center,
+        _tablaServicios(recibo, fmtMonto,
+            esSinPunitorios: esSinPunitorios, small: true),
+        pw.SizedBox(height: 4),
+
+        // ── RESUMEN + NOTAS ───────────────────────────────────
+        pw.Row(
+          crossAxisAlignment: pw.CrossAxisAlignment.start,
+          children: [
+            pw.Expanded(
+              child: tieneNotas
+                  ? pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text('Notas',
+                            style: pw.TextStyle(
+                                fontSize: 7,
+                                fontWeight: pw.FontWeight.bold,
+                                color: _grayColor)),
+                        pw.SizedBox(height: 2),
+                        pw.Text(recibo.notas!,
+                            style: pw.TextStyle(
+                                fontSize: 7,
+                                color: _darkColor,
+                                fontStyle: pw.FontStyle.italic)),
+                      ],
+                    )
+                  : pw.SizedBox(),
+            ),
+            _resumenPago(recibo, fmtMonto, small: true),
+          ],
         ),
       ],
     );
   }
 
-  // ── PIE ────────────────────────────────────────────────────────
-  static pw.Widget _pie() {
-    return pw.Center(
-      child: pw.Text(
-        'Coppola Pavese Inmobiliaria — Documento generado digitalmente',
-        style: pw.TextStyle(
-            fontSize: 8,
-            color: const PdfColor.fromInt(0xFFBDBDBD)),
-      ),
-    );
-  }
-
-  // ── Helpers internos ───────────────────────────────────────────
-
-  static pw.Widget _divisor() {
-    return pw.Container(
-      height: 1,
-      margin: const pw.EdgeInsets.symmetric(vertical: 2),
-      color: _primaryColor,
-    );
-  }
-
-  static pw.Widget _tituloSeccion(String texto) {
-    return pw.Text(
-      texto,
-      style: pw.TextStyle(
-        fontSize: 9,
-        fontWeight: pw.FontWeight.bold,
-        color: _primaryColor,
-        letterSpacing: 1,
-      ),
-    );
-  }
-
-  static pw.Widget _infoFila(String label, String valor) {
-    return pw.Padding(
-      padding: const pw.EdgeInsets.symmetric(vertical: 1.5),
-      child: pw.Row(
-        crossAxisAlignment: pw.CrossAxisAlignment.start,
-        children: [
-          pw.Text(
-            '$label ',
-            style: pw.TextStyle(
-              fontSize: 10,
-              fontWeight: pw.FontWeight.bold,
-              color: const PdfColor.fromInt(0xFF424242),
-            ),
-          ),
-          pw.Expanded(
-            child: pw.Text(
-              valor,
-              style: pw.TextStyle(fontSize: 10, color: _darkColor),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  static pw.Widget _thPdf(String texto, {bool center = false}) {
-    return pw.Padding(
-      padding:
-          const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 5),
-      child: pw.Text(
-        texto,
-        style: pw.TextStyle(
-          color: PdfColors.white,
-          fontWeight: pw.FontWeight.bold,
-          fontSize: 9,
-        ),
-        textAlign:
-            center ? pw.TextAlign.center : pw.TextAlign.left,
-      ),
-    );
-  }
-
-  static pw.Widget _tdPdf(
-    String texto, {
-    bool center = false,
-    bool bold = false,
-    PdfColor? color,
+  // ══════════════════════════════════════════════════════════════
+  // TABLA DE SERVICIOS
+  // ══════════════════════════════════════════════════════════════
+  static pw.Widget _tablaServicios(
+    ReciboModel recibo,
+    NumberFormat fmt, {
+    bool esSinPunitorios = false,
+    bool small = false,
   }) {
-    return pw.Padding(
-      padding:
-          const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 5),
-      child: pw.Text(
-        texto,
-        style: pw.TextStyle(
-          fontSize: 10,
-          fontWeight:
-              bold ? pw.FontWeight.bold : pw.FontWeight.normal,
-          color: color ?? _darkColor,
+    final fs   = small ? 7.0 : 7.5;
+    final fsTh = small ? 6.5 : 7.5;
+    final pad  = small ? 2.5 : 3.5;
+
+    pw.Widget th(String t, {bool center = false}) => pw.Padding(
+          padding: pw.EdgeInsets.symmetric(horizontal: 4, vertical: pad),
+          child: pw.Text(t,
+              style: pw.TextStyle(
+                  color: PdfColors.white,
+                  fontWeight: pw.FontWeight.bold,
+                  fontSize: fsTh),
+              textAlign: center ? pw.TextAlign.center : pw.TextAlign.left),
+        );
+
+    pw.Widget td(String t, {bool center = false, bool bold = false, PdfColor? color}) =>
+        pw.Padding(
+          padding: pw.EdgeInsets.symmetric(horizontal: 4, vertical: pad),
+          child: pw.Text(t,
+              style: pw.TextStyle(
+                  fontSize: fs,
+                  fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
+                  color: color ?? _darkColor),
+              textAlign: center ? pw.TextAlign.center : pw.TextAlign.left),
+        );
+
+    final hasFechaVence = recibo.servicios.any(
+        (s) => s.fechaVence != null && s.fechaVence!.isNotEmpty);
+    final fmtDate = DateFormat('dd/MM/yyyy');
+
+    return pw.Table(
+      columnWidths: {
+        if (hasFechaVence) 0: const pw.FixedColumnWidth(52),
+        (hasFechaVence ? 1 : 0): const pw.FlexColumnWidth(4),
+        (hasFechaVence ? 2 : 1): const pw.FlexColumnWidth(2),
+        (hasFechaVence ? 3 : 2): const pw.FlexColumnWidth(2),
+        (hasFechaVence ? 4 : 3): const pw.FlexColumnWidth(2),
+      },
+      children: [
+        // Encabezado
+        pw.TableRow(
+          decoration: const pw.BoxDecoration(color: _darkColor),
+          children: [
+            if (hasFechaVence) th('Vence', center: true),
+            th('Descripción'),
+            th('Monto', center: true),
+            th('Punit.', center: true),
+            th('Total', center: true),
+          ],
         ),
-        textAlign:
-            center ? pw.TextAlign.center : pw.TextAlign.left,
+        // Filas de servicios
+        ...recibo.servicios.asMap().entries.map((e) {
+          final i = e.key;
+          final s = e.value;
+          String venceStr = '';
+          if (s.fechaVence != null && s.fechaVence!.isNotEmpty) {
+            try { venceStr = fmtDate.format(DateTime.parse(s.fechaVence!)); } catch (_) {
+              venceStr = s.fechaVence!;
+            }
+          }
+          return pw.TableRow(
+            decoration: pw.BoxDecoration(
+              color: i % 2 == 0 ? PdfColors.white : _lightGray,
+            ),
+            children: [
+              if (hasFechaVence) td(venceStr, center: true),
+              td(s.descripcion),
+              td(fmt.format(s.monto), center: true),
+              td(s.punitorios > 0 ? fmt.format(s.punitorios) : '\$0,00',
+                  center: true),
+              td(fmt.format(s.total), center: true, bold: true),
+            ],
+          );
+        }),
+      ],
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // RESUMEN DE PAGO
+  // ══════════════════════════════════════════════════════════════
+  static pw.Widget _resumenPago(
+    ReciboModel recibo,
+    NumberFormat fmt, {
+    bool small = false,
+  }) {
+    final fs = small ? 7.5 : 8.5;
+    final fsBig = small ? 8.0 : 9.5;
+
+    pw.Widget fila(String label, String valor, PdfColor color,
+        {bool negrita = false}) {
+      return pw.Row(
+        mainAxisSize: pw.MainAxisSize.min,
+        children: [
+          pw.SizedBox(width: 80,
+              child: pw.Text(label,
+                  textAlign: pw.TextAlign.right,
+                  style: pw.TextStyle(
+                      fontSize: fs, color: _grayColor))),
+          pw.SizedBox(width: 4),
+          pw.SizedBox(width: 80,
+              child: pw.Text(valor,
+                  textAlign: pw.TextAlign.right,
+                  style: pw.TextStyle(
+                      fontSize: negrita ? fsBig : fs,
+                      fontWeight: negrita
+                          ? pw.FontWeight.bold
+                          : pw.FontWeight.normal,
+                      color: color))),
+        ],
+      );
+    }
+
+    final colorSaldo = recibo.saldo > 0 ? _redColor : _greenColor;
+
+    return pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.end,
+      children: [
+        fila('Monto a Abonar:', fmt.format(recibo.montoTotal), _blueColor),
+        pw.SizedBox(height: 2),
+        fila('TOTAL ABONADO:', fmt.format(recibo.montoAbonado), _greenColor,
+            negrita: true),
+        pw.SizedBox(height: 2),
+        fila('Saldo:', fmt.format(recibo.saldo), colorSaldo, negrita: true),
+      ],
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // HELPERS
+  // ══════════════════════════════════════════════════════════════
+  static pw.Widget _lineaCorte() {
+    return pw.Padding(
+      padding: const pw.EdgeInsets.symmetric(vertical: 4),
+      child: pw.Row(
+        children: List.generate(
+          90,
+          (i) => pw.Expanded(
+            child: pw.Container(
+              height: 0.5,
+              color: i % 2 == 0 ? _darkColor : PdfColors.white,
+            ),
+          ),
+        ),
       ),
     );
   }
 
-  static pw.Widget _filaResumenPdf(
-    String label,
-    String valor,
-    PdfColor color, {
-    PdfColor? fondo,
-    bool negrita = false,
-  }) {
-    return pw.Container(
-      color: fondo,
-      padding: const pw.EdgeInsets.symmetric(
-          horizontal: 12, vertical: 7),
-      child: pw.Row(
-        mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-        children: [
-          pw.Text(
-            label,
+  static pw.Widget _barraLinea() {
+    return pw.Container(height: 1, color: _darkColor);
+  }
+
+  static pw.Widget _miniInfoFila(String label, String valor) {
+    return pw.Row(
+      mainAxisSize: pw.MainAxisSize.min,
+      children: [
+        pw.Text('$label ',
             style: pw.TextStyle(
-              fontSize: 11,
-              fontWeight: negrita
-                  ? pw.FontWeight.bold
-                  : pw.FontWeight.normal,
-              color: const PdfColor.fromInt(0xFF424242),
-            ),
-          ),
-          pw.Text(
-            valor,
-            style: pw.TextStyle(
-              fontSize: 12,
-              fontWeight: pw.FontWeight.bold,
-              color: color,
-            ),
-          ),
-        ],
-      ),
+                fontSize: 7.5,
+                fontWeight: pw.FontWeight.bold,
+                color: _darkColor)),
+        pw.Text(valor,
+            style: pw.TextStyle(fontSize: 7.5, color: _darkColor)),
+      ],
     );
   }
 }
