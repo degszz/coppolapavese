@@ -1,8 +1,17 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../database/database_helper.dart';
+import '../models/inquilino_model.dart';
+import 'configuracion/config_red_screen.dart';
+import 'contratos/contrato_form_screen.dart';
 import 'contratos/contratos_list_screen.dart';
+import 'garantes/garantes_list_screen.dart';
+import 'inquilinos/inquilinos_list_screen.dart';
+import 'propiedades/propiedades_list_screen.dart';
+import 'propietarios/propietario_form_screen.dart';
+import 'propietarios/propietarios_list_screen.dart';
 import 'recibos/recibo_form_screen.dart';
 import 'reportes/excel_export_screen.dart';
 
@@ -14,14 +23,109 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
+  static const _magenta = Color(0xFFC2185B);
   int _indiceActual = 0;
 
-  final List<Widget> _pantallas = [
+  // Claves que cambian al navegar al tab para forzar recarga de datos
+  int _reciboKey = 0;
+  int _reportesKey = 0;
+
+  // Orden: 0-Inicio, 1-Contratos, 2-NuevoRecibo, 3-Reportes,
+  //        4-Propiedades, 5-Propietarios, 6-Inquilinos, 7-Garantes
+  List<Widget> get _pantallas => [
     const _InicioTab(),
     const ContratosListScreen(),
-    const ReciboFormScreen(),
-    const ExcelExportScreen(),
+    ReciboFormScreen(key: ValueKey(_reciboKey)),
+    ExcelExportScreen(key: ValueKey(_reportesKey)),
+    const PropiedadesListScreen(),
+    const PropietariosListScreen(),
+    const InquilinosListScreen(),
+    const GarantesListScreen(),
   ];
+
+  void _irANuevoContrato() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => const ContratoFormScreen()),
+    );
+  }
+
+  void _irANuevoRecibo() {
+    setState(() {
+      _reciboKey++;
+      _indiceActual = 2;
+    });
+  }
+
+  Widget _botonNuevoCentral() {
+    final btnKey = GlobalKey();
+    return GestureDetector(
+      onTap: () {
+        final RenderBox box = btnKey.currentContext!.findRenderObject() as RenderBox;
+        final Offset offset = box.localToGlobal(Offset.zero);
+        showMenu<String>(
+          context: context,
+          position: RelativeRect.fromLTRB(
+            offset.dx,
+            offset.dy - 110, // arriba del botón
+            offset.dx + box.size.width,
+            offset.dy,
+          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          elevation: 8,
+          items: [
+            PopupMenuItem<String>(
+              value: 'contrato',
+              child: Row(
+                children: [
+                  Icon(Icons.description, color: _magenta, size: 20),
+                  const SizedBox(width: 10),
+                  const Text('Nuevo Contrato', style: TextStyle(fontWeight: FontWeight.w600)),
+                ],
+              ),
+            ),
+            PopupMenuItem<String>(
+              value: 'recibo',
+              child: Row(
+                children: [
+                  Icon(Icons.receipt_long, color: _magenta, size: 20),
+                  const SizedBox(width: 10),
+                  const Text('Nuevo Recibo', style: TextStyle(fontWeight: FontWeight.w600)),
+                ],
+              ),
+            ),
+          ],
+        ).then((value) {
+          if (value == 'contrato') _irANuevoContrato();
+          if (value == 'recibo') _irANuevoRecibo();
+        });
+      },
+      child: Column(
+        key: btnKey,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: _magenta,
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: [
+                BoxShadow(
+                  color: _magenta.withValues(alpha: 0.4),
+                  blurRadius: 8,
+                  offset: const Offset(0, 3),
+                ),
+              ],
+            ),
+            child: const Icon(Icons.add, color: Colors.white, size: 28),
+          ),
+          const SizedBox(height: 2),
+          const Text('Nuevo', style: TextStyle(fontSize: 9, color: _magenta, fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -30,35 +134,76 @@ class _HomeScreenState extends State<HomeScreen> {
         index: _indiceActual,
         children: _pantallas,
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _indiceActual,
-        onDestinationSelected: (index) =>
-            setState(() => _indiceActual = index),
-        backgroundColor: Colors.white,
-        indicatorColor: const Color(0xFFC2185B).withOpacity(0.15),
-        labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home, color: Color(0xFFC2185B)),
-            label: 'Inicio',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.description_outlined),
-            selectedIcon: Icon(Icons.description, color: Color(0xFFC2185B)),
-            label: 'Contratos',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.receipt_long_outlined),
-            selectedIcon: Icon(Icons.receipt_long, color: Color(0xFFC2185B)),
-            label: 'Nuevo Recibo',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.bar_chart_outlined),
-            selectedIcon: Icon(Icons.bar_chart, color: Color(0xFFC2185B)),
-            label: 'Reportes',
-          ),
+      bottomNavigationBar: _buildBottomBar(),
+    );
+  }
+
+  Widget _buildBottomBar() {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        boxShadow: [
+          BoxShadow(color: Color(0x1A000000), blurRadius: 8, offset: Offset(0, -2)),
         ],
+      ),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 4),
+          child: Row(
+            children: [
+              // Izquierda: Inicio, Contratos, Nuevo Recibo, Reportes
+              _navItem(0, Icons.home_outlined, Icons.home, 'Inicio'),
+              _navItem(1, Icons.description_outlined, Icons.description, 'Contratos'),
+              _navItem(2, Icons.receipt_long_outlined, Icons.receipt_long, 'Recibo'),
+              _navItem(3, Icons.bar_chart_outlined, Icons.bar_chart, 'Reportes'),
+
+              // Botón rosa central — Nuevo (popup)
+              Expanded(
+                child: _botonNuevoCentral(),
+              ),
+
+              // Derecha: Propiedades, Propietarios, Inquilinos, Garantes
+              _navItem(4, Icons.apartment_outlined, Icons.apartment, 'Propiedades'),
+              _navItem(5, Icons.people_outline, Icons.people, 'Propietarios'),
+              _navItem(6, Icons.person_search_outlined, Icons.person_search, 'Inquilinos'),
+              _navItem(7, Icons.verified_user_outlined, Icons.verified_user, 'Garantes'),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _navItem(int index, IconData icon, IconData selectedIcon, String label) {
+    final selected = _indiceActual == index;
+    return Expanded(
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => setState(() {
+          if (index == 2) _reciboKey++;
+          if (index == 3) _reportesKey++;
+          _indiceActual = index;
+        }),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              selected ? selectedIcon : icon,
+              size: 22,
+              color: selected ? _magenta : const Color(0xFF757575),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 9,
+                fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                color: selected ? _magenta : const Color(0xFF757575),
+              ),
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -80,11 +225,23 @@ class _InicioTabState extends State<_InicioTab> {
   Map<String, dynamic> _estadisticas = {};
   List<Map<String, dynamic>> _recibosPendientes = [];
   bool _cargando = true;
+  Timer? _autoRefresh;
 
   @override
   void initState() {
     super.initState();
     _cargarEstadisticas();
+    // Auto-refresco cada 15 segundos para sincronización en red
+    _autoRefresh = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => _cargarEstadisticasSilencioso(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _autoRefresh?.cancel();
+    super.dispose();
   }
 
   Future<void> _cargarEstadisticas() async {
@@ -102,6 +259,20 @@ class _InicioTabState extends State<_InicioTab> {
     }
   }
 
+  /// Refresco silencioso (sin spinner) para cambios de otro equipo
+  Future<void> _cargarEstadisticasSilencioso() async {
+    try {
+      final stats = await _db.obtenerEstadisticasGenerales();
+      final pendientes = await _db.obtenerRecibosPendientes();
+      if (mounted) {
+        setState(() {
+          _estadisticas = stats;
+          _recibosPendientes = pendientes;
+        });
+      }
+    } catch (_) {}
+  }
+
   @override
   Widget build(BuildContext context) {
     final mes = DateFormat('MMMM yyyy', 'es_AR').format(DateTime.now());
@@ -110,6 +281,14 @@ class _InicioTabState extends State<_InicioTab> {
       appBar: AppBar(
         title: const Text('Coppola Pavese Inmobiliaria'),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.settings_outlined),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const ConfigRedScreen()),
+            ),
+            tooltip: 'Configuraci\u00f3n de red',
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _cargarEstadisticas,
@@ -206,13 +385,20 @@ class _InicioTabState extends State<_InicioTab> {
         children: [
           // Logo circular
           Container(
-            width: 56,
-            height: 56,
+            width: 60,
+            height: 60,
             decoration: BoxDecoration(
               color: Colors.white.withOpacity(0.2),
               shape: BoxShape.circle,
             ),
-            child: const Icon(Icons.home_work, color: Colors.white, size: 30),
+            child: ClipOval(
+              child: Image.asset(
+                'assets/images/cp.png',
+                width: 60,
+                height: 60,
+                fit: BoxFit.cover,
+              ),
+            ),
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -310,6 +496,15 @@ class _InicioTabState extends State<_InicioTab> {
   }
 
   Widget _seccionAccesosRapidos(BuildContext context) {
+    void irATab(int indice) {
+      final state = context.findAncestorStateOfType<_HomeScreenState>();
+      if (state != null) {
+        if (indice == 2) state._reciboKey++;
+        if (indice == 3) state._reportesKey++;
+        state.setState(() => state._indiceActual = indice);
+      }
+    }
+
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
       child: Column(
@@ -328,40 +523,87 @@ class _InicioTabState extends State<_InicioTab> {
             children: [
               Expanded(
                 child: _botonAcceso(
-                  icono: Icons.add_circle_outline,
-                  label: 'Nuevo Recibo',
-                  color: const Color(0xFFC2185B),
-                  onTap: () {
-                    final state = context
-                        .findAncestorStateOfType<_HomeScreenState>();
-                    state?.setState(() => state._indiceActual = 2);
+                  icono: Icons.description_outlined,
+                  label: 'Nuevo\nContrato',
+                  color: const Color(0xFFE65100),
+                  onTap: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const ContratoFormScreen(),
+                      ),
+                    );
                   },
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _botonAcceso(
+                  icono: Icons.receipt_long_outlined,
+                  label: 'Nuevo\nRecibo',
+                  color: const Color(0xFFC2185B),
+                  onTap: () => irATab(2),
+                ),
+              ),
+              const SizedBox(width: 10),
               Expanded(
                 child: _botonAcceso(
                   icono: Icons.people_outline,
-                  label: 'Propietarios',
+                  label: 'Nuevo\nPropietario',
                   color: const Color(0xFF1565C0),
-                  onTap: () {
-                    final state = context
-                        .findAncestorStateOfType<_HomeScreenState>();
-                    state?.setState(() => state._indiceActual = 1);
+                  onTap: () async {
+                    await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const PropietarioFormScreen(),
+                      ),
+                    );
                   },
                 ),
               ),
-              const SizedBox(width: 12),
+              const SizedBox(width: 10),
               Expanded(
                 child: _botonAcceso(
-                  icono: Icons.file_download_outlined,
-                  label: 'Exportar',
-                  color: const Color(0xFF2E7D32),
-                  onTap: () {
-                    final state = context
-                        .findAncestorStateOfType<_HomeScreenState>();
-                    state?.setState(() => state._indiceActual = 3);
+                  icono: Icons.person_add_outlined,
+                  label: 'Nuevo\nInquilino',
+                  color: const Color(0xFF6A1B9A),
+                  onTap: () async {
+                    await showDialog<InquilinoModel>(
+                      context: context,
+                      builder: (_) => const InquilinoDialog(),
+                    );
                   },
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _botonAcceso(
+                  icono: Icons.apartment_outlined,
+                  label: 'Nueva\nPropiedad',
+                  color: const Color(0xFF00695C),
+                  onTap: () async {
+                    await PropiedadesListScreen.mostrarDialogNuevaPropiedad(context);
+                  },
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _botonAcceso(
+                  icono: Icons.verified_user_outlined,
+                  label: 'Nuevo\nGarante',
+                  color: const Color(0xFF4E342E),
+                  onTap: () async {
+                    await GarantesListScreen.mostrarDialogNuevoGarante(context);
+                  },
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _botonAcceso(
+                  icono: Icons.bar_chart_outlined,
+                  label: 'Reportes',
+                  color: const Color(0xFF2E7D32),
+                  onTap: () => irATab(3),
                 ),
               ),
             ],
@@ -720,14 +962,14 @@ class _InicioTabState extends State<_InicioTab> {
         dir.isNotEmpty ? 'correspondiente a *$dir* ' : '';
 
     final String mensaje = esPago
-        ? 'Hola $nombre! 🏠\n'
+        ? 'Hola $nombre!\n'
             'Le informamos que el recibo N° $numero por *${fmt.format(monto)}* '
-            '${dirPart}ha sido registrado como *PAGADO*. ✅\n'
+            '${dirPart}ha sido registrado como *PAGADO*.\n'
             '¡Muchas gracias por su pago!\n'
             '_Coppola Pavese Inmobiliaria_'
-        : 'Hola $nombre! 🏠\n'
+        : 'Hola $nombre!\n'
             'Le recordamos que el recibo N° $numero por *${fmt.format(monto)}* '
-            '${dirPart}se encuentra *pendiente de pago*. ⏳\n'
+            '${dirPart}se encuentra *pendiente de pago*.\n'
             'Por favor, realice el pago a la brevedad.\n'
             '_Coppola Pavese Inmobiliaria_';
 

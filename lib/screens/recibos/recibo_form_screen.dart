@@ -152,6 +152,9 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
         conceptosData.map((m) => ConceptoRegularModel.fromMap(m)).toList();
     final cuotasTotal = (c['cuotas_total'] as int?) ?? 0;
 
+    // Cargar períodos fijos para generar nota de caducidad
+    final periodosData = await _db.obtenerPeriodosPorContrato(contratoId);
+
     // Build inquilino name
     final inqNombre = c['inquilino_nombre'] as String? ?? '';
     final inqApellido = c['inquilino_apellido'] as String? ?? '';
@@ -161,14 +164,40 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
     final direccion = c['propiedad_direccion'] as String? ?? '';
     final localidad = c['propiedad_localidad'] as String? ?? '';
 
-    // Auto-fill first service
+    // Descripción de alquiler con mes y año legibles
     final meses = [
-      '', 'enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
-      'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'
+      '', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+      'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
     ];
     final now = DateTime.now();
     final mesLabel = meses[now.month];
-    final desc = 'Alquiler Cuota:$numeroCuota $mesLabel-${now.year}';
+    final desc = 'Alquiler $mesLabel ${now.year}';
+
+    // Nota automática con mes/año y, si hay períodos fijos, info de caducidad
+    String notaPeriodo = 'Alquiler $mesLabel ${now.year}.';
+    if (periodosData.isNotEmpty) {
+      Map<String, dynamic>? periodoActual;
+      for (final p in periodosData) {
+        final desde = p['cuota_desde'] as int;
+        final hasta = p['cuota_hasta'] as int;
+        if (numeroCuota >= desde && numeroCuota <= hasta) {
+          periodoActual = p;
+          break;
+        }
+      }
+      if (periodoActual != null) {
+        final hasta = periodoActual['cuota_hasta'] as int;
+        final restantes = hasta - numeroCuota;
+        if (restantes == 0) {
+          notaPeriodo +=
+              ' Última cuota del período vigente (hasta cuota $hasta).';
+        } else {
+          notaPeriodo +=
+              ' Período vigente: cuotas ${periodoActual['cuota_desde']}-$hasta.'
+              ' Quedan $restantes cuota${restantes == 1 ? '' : 's'} para cambio de período.';
+        }
+      }
+    }
 
     setState(() {
       _contratoSel = c;
@@ -181,6 +210,7 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
       _cuotasTotal = cuotasTotal;
       _domicilioCtrl.text = direccion;
       _localidadCtrl.text = localidad;
+      _notasReciboCtrl.text = notaPeriodo;
 
       // Auto-populate first service if monto > 0
       if (monto > 0 && _servicios.isNotEmpty) {
@@ -355,42 +385,128 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
     );
   }
 
+  // ── Recibo Neutro (en blanco) ───────────────────────────────
+  void _imprimirReciboNeutro() {
+    final blancoServicios = [
+      ServicioItemModel(descripcion: '___________________________', monto: 0, punitorios: 0, total: 0),
+      ServicioItemModel(descripcion: '___________________________', monto: 0, punitorios: 0, total: 0),
+      ServicioItemModel(descripcion: '___________________________', monto: 0, punitorios: 0, total: 0),
+    ];
+    final reciboNeutro = ReciboModel(
+      numeroRecibo: _numeroRecibo,
+      propietarioId: 0,
+      fechaEmision: DateFormat('yyyy-MM-dd').format(_fechaEmision),
+      fechaVencimiento: DateFormat('yyyy-MM-dd').format(_fechaVencimiento),
+      montoTotal: 0,
+      montoAbonado: 0,
+      saldo: 0,
+      estado: 'pendiente',
+      usuario: _usuarioCtrl.text.trim(),
+      createdAt: DateTime.now().toIso8601String(),
+      propietarioNombre: '___________________________',
+      inquilinoNombre: '___________________________',
+      direccion: '___________________________',
+      localidad: '',
+      esNeutro: true,
+      servicios: blancoServicios,
+    );
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ReciboPreviewScreen(recibo: reciboNeutro, esNuevo: false),
+      ),
+    );
+  }
+
   // ── Pagar Próximo Período ─────────────────────────────────────
   Future<void> _pagarProximoPeriodo() async {
     if (_contratoSel == null) {
       _mostrarError('Seleccioná un contrato');
       return;
     }
-    final confirmar = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Pagar Próximo Período'),
-        content: const Text(
-          '¿Crear recibo para el período siguiente?\n\n'
-          'Se abrirá un nuevo formulario con las fechas desplazadas 30 días.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancelar'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Continuar'),
-          ),
-        ],
-      ),
+
+    final contratoId = _contratoSel!['id'] as int;
+
+    // Avanzar fechas un mes
+    final nuevaEmision = DateTime(
+      _fechaEmision.year,
+      _fechaEmision.month + 1,
+      _fechaEmision.day,
     );
-    if (confirmar == true && mounted) {
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(
-          builder: (_) => ReciboFormScreen(
-            contratoIdInicial: _contratoSel!['id'] as int?,
-            fechaEmisionInicial: _fechaEmision.add(const Duration(days: 30)),
-            fechaVencimientoInicial:
-                _fechaVencimiento.add(const Duration(days: 30)),
-          ),
+    final nuevaVenc = DateTime(
+      _fechaVencimiento.year,
+      _fechaVencimiento.month + 1,
+      _fechaVencimiento.day,
+    );
+
+    // Próxima cuota
+    final nuevaCuota = _numeroCuota + 1;
+
+    // Obtener monto del nuevo período
+    final nuevoMonto = await _db.obtenerMontoPeriodo(contratoId, nuevaCuota);
+
+    // Nuevo número de recibo
+    final nuevoNumRecibo = await _db.obtenerProximoNumeroRecibo();
+
+    // Descripción con mes/año
+    final meses = [
+      '', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+      'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
+    ];
+    final mesLabel = meses[nuevaEmision.month];
+    final desc = 'Alquiler $mesLabel ${nuevaEmision.year}';
+
+    // Nota automática
+    final periodosData = await _db.obtenerPeriodosPorContrato(contratoId);
+    String notaPeriodo = 'Alquiler $mesLabel ${nuevaEmision.year}.';
+    if (periodosData.isNotEmpty) {
+      Map<String, dynamic>? periodoActual;
+      for (final p in periodosData) {
+        final desde = p['cuota_desde'] as int;
+        final hasta = p['cuota_hasta'] as int;
+        if (nuevaCuota >= desde && nuevaCuota <= hasta) {
+          periodoActual = p;
+          break;
+        }
+      }
+      if (periodoActual != null) {
+        final hasta = periodoActual['cuota_hasta'] as int;
+        final restantes = hasta - nuevaCuota;
+        if (restantes == 0) {
+          notaPeriodo +=
+              ' Última cuota del período vigente (hasta cuota $hasta).';
+        } else {
+          notaPeriodo +=
+              ' Período vigente: cuotas ${periodoActual['cuota_desde']}-$hasta.'
+              ' Quedan $restantes cuota${restantes == 1 ? '' : 's'} para cambio de período.';
+        }
+      }
+    }
+
+    setState(() {
+      _fechaEmision = nuevaEmision;
+      _fechaVencimiento = nuevaVenc;
+      _numeroCuota = nuevaCuota;
+      _numeroRecibo = nuevoNumRecibo;
+      _montoAbonadoCtrl.text = '0';
+      _notasReciboCtrl.text = notaPeriodo;
+
+      // Actualizar primer servicio con el nuevo monto y descripción
+      if (_servicios.isNotEmpty) {
+        _servicios.first.descripcion = desc;
+        _servicios.first.descripcionCtrl.text = desc;
+        if (nuevoMonto > 0) {
+          _servicios.first.monto = nuevoMonto;
+          _servicios.first.montoCtrl.text = nuevoMonto.toStringAsFixed(0);
+        }
+      }
+    });
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Avanzado a cuota $nuevaCuota — $desc'),
+          backgroundColor: const Color(0xFF2E7D32),
         ),
       );
     }
@@ -541,8 +657,8 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
                     icono: Icons.description_outlined,
                     children: [
                       _labelCampo('Contrato *'),
-                      DropdownButtonFormField<Map<String, dynamic>>(
-                        value: _contratoSel,
+                      DropdownButtonFormField<int>(
+                        value: _contratoSel?['id'] as int?,
                         isExpanded: true,
                         decoration: const InputDecoration(
                           prefixIcon: Icon(Icons.home_work_outlined, size: 18),
@@ -551,20 +667,24 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
                               horizontal: 10, vertical: 12),
                         ),
                         items: _contratos.map((c) {
+                          final id = c['id'] as int;
                           final dir = c['propiedad_direccion'] as String? ?? 'Sin dirección';
                           final inqN = c['inquilino_nombre'] as String? ?? '';
                           final inqA = c['inquilino_apellido'] as String? ?? '';
                           final inq = inqA.isNotEmpty ? '$inqN $inqA' : inqN;
-                          return DropdownMenuItem<Map<String, dynamic>>(
-                            value: c,
+                          return DropdownMenuItem<int>(
+                            value: id,
                             child: Text(
                               inq.isNotEmpty ? '$dir — $inq' : dir,
                               overflow: TextOverflow.ellipsis,
                             ),
                           );
                         }).toList(),
-                        onChanged: (c) {
-                          if (c != null) _seleccionarContrato(c);
+                        onChanged: (id) {
+                          if (id != null) {
+                            final c = _contratos.firstWhere((c) => c['id'] == id);
+                            _seleccionarContrato(c);
+                          }
                         },
                         validator: (v) =>
                             v == null ? 'Seleccioná un contrato' : null,
@@ -870,6 +990,12 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
       color: const Color(0xFF1A3A5C),
       child: Row(
         children: [
+          _botonAccion(
+            icono: Icons.article_outlined,
+            label: 'Recibo\nen Blanco',
+            onTap: _guardando ? null : _imprimirReciboNeutro,
+          ),
+          _separadorV(),
           _botonAccion(
             icono: Icons.send_outlined,
             label: 'Enviar\naviso',

@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
+import 'db_config.dart';
 
 class DatabaseHelper {
   static final DatabaseHelper _instance = DatabaseHelper._internal();
@@ -15,27 +16,31 @@ class DatabaseHelper {
     return _database!;
   }
 
-  Future<Database> _initDatabase() async {
-    // En Windows/Linux/macOS usamos la carpeta Documents para persistencia real
-    String dbPath;
-    if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
-      final docsDir = await getApplicationDocumentsDirectory();
-      final appDir = Directory(join(docsDir.path, 'CoppolaPavese'));
-      if (!await appDir.exists()) {
-        await appDir.create(recursive: true);
-      }
-      dbPath = join(appDir.path, 'inmobiliaria.db');
-    } else {
-      final dir = await getDatabasesPath();
-      dbPath = join(dir, 'inmobiliaria.db');
+  /// Cierra la BD actual y fuerza reconexión (al cambiar ruta)
+  Future<void> reconectar() async {
+    if (_database != null && _database!.isOpen) {
+      await _database!.close();
     }
+    _database = null;
+    _database = await _initDatabase();
+  }
+
+  Future<Database> _initDatabase() async {
+    // Obtener ruta desde configuración (local o red compartida)
+    final dbPath = await DbConfig.instance.obtenerRutaDb();
 
     return await openDatabase(
       dbPath,
-      version: 4, // v4: conceptos_regulares columnas extendidas
+      version: 5, // v5: tabla garantes
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
-      onConfigure: (db) async => await db.execute('PRAGMA foreign_keys = ON'),
+      onConfigure: (db) async {
+        await db.execute('PRAGMA foreign_keys = ON');
+        // Acceso concurrente: DELETE journal es más seguro en carpetas de red
+        await db.execute('PRAGMA journal_mode = DELETE');
+        // Esperar hasta 10s si la BD está bloqueada por otro equipo
+        await db.execute('PRAGMA busy_timeout = 10000');
+      },
     );
   }
 
@@ -127,6 +132,8 @@ class DatabaseHelper {
     await _migrarV3(db);
     // tablas v4
     await _migrarV4(db);
+    // tablas v5
+    await _migrarV5(db);
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -142,6 +149,9 @@ class DatabaseHelper {
     }
     if (oldVersion < 4) {
       await _migrarV4(db);
+    }
+    if (oldVersion < 5) {
+      await _migrarV5(db);
     }
   }
 
@@ -162,6 +172,23 @@ class DatabaseHelper {
         await db.execute('ALTER TABLE conceptos_regulares ADD COLUMN $col');
       } catch (_) {}
     }
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // MIGRACIÓN v5 — tabla garantes
+  // ════════════════════════════════════════════════════════════════
+  Future<void> _migrarV5(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS garantes (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        contrato_id  INTEGER NOT NULL,
+        nombre       TEXT NOT NULL,
+        telefono     TEXT,
+        email        TEXT,
+        tipo_garantia TEXT NOT NULL DEFAULT 'recibo_sueldo',
+        FOREIGN KEY (contrato_id) REFERENCES contratos(id) ON DELETE CASCADE
+      )
+    ''');
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -394,6 +421,25 @@ class DatabaseHelper {
       where: 'id = ?',
       whereArgs: [id],
     );
+  }
+
+  /// Lista inquilinos con propietario y propiedad (del contrato más reciente)
+  Future<List<Map<String, dynamic>>> obtenerInquilinosConDetalle() async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT
+        i.*,
+        p.nombre  AS propietario_nombre,
+        c.id      AS contrato_id,
+        pr.direccion  AS propiedad_direccion,
+        pr.localidad  AS propiedad_localidad
+      FROM inquilinos i
+      LEFT JOIN propietarios p  ON i.propietario_id = p.id
+      LEFT JOIN contratos    c  ON c.inquilino_id = i.id
+      LEFT JOIN propiedades  pr ON c.propiedad_id = pr.id
+      GROUP BY i.id
+      ORDER BY i.nombre ASC, i.apellido ASC
+    ''');
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -851,6 +897,7 @@ class DatabaseHelper {
     String? fechaDesde,
     String? fechaHasta,
     int? propietarioId,
+    int? inquilinoId,
     String? estado,
   }) async {
     final db = await database;
@@ -868,6 +915,10 @@ class DatabaseHelper {
     if (propietarioId != null) {
       condiciones.add('r.propietario_id = ?');
       args.add(propietarioId);
+    }
+    if (inquilinoId != null) {
+      condiciones.add('r.inquilino_id = ?');
+      args.add(inquilinoId);
     }
     if (estado != null) {
       condiciones.add('r.estado = ?');
@@ -1002,6 +1053,55 @@ class DatabaseHelper {
     final db = await database;
     await db.delete('periodos_fijos',
         where: 'contrato_id = ?', whereArgs: [contratoId]);
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // GARANTES — CRUD
+  // ════════════════════════════════════════════════════════════════
+
+  Future<void> upsertGarantes(
+      int contratoId, List<Map<String, dynamic>> garantes) async {
+    final db = await database;
+    await db.delete('garantes',
+        where: 'contrato_id = ?', whereArgs: [contratoId]);
+    for (final g in garantes) {
+      await db.insert('garantes', {
+        'contrato_id': contratoId,
+        'nombre': g['nombre'],
+        'telefono': g['telefono'],
+        'email': g['email'],
+        'tipo_garantia': g['tipo_garantia'] ?? 'recibo_sueldo',
+      });
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> obtenerGarantesPorContrato(
+      int contratoId) async {
+    final db = await database;
+    return await db.query('garantes',
+        where: 'contrato_id = ?', whereArgs: [contratoId]);
+  }
+
+  Future<void> eliminarGarantesPorContrato(int contratoId) async {
+    final db = await database;
+    await db.delete('garantes',
+        where: 'contrato_id = ?', whereArgs: [contratoId]);
+  }
+
+  Future<List<Map<String, dynamic>>> obtenerGarantesConDetalle() async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT g.*,
+             p.nombre   AS propietario_nombre,
+             i.nombre   AS inquilino_nombre,
+             pr.direccion AS propiedad_direccion
+      FROM garantes g
+      LEFT JOIN contratos c ON g.contrato_id = c.id
+      LEFT JOIN propietarios p ON c.propietario_id = p.id
+      LEFT JOIN inquilinos i ON c.inquilino_id = i.id
+      LEFT JOIN propiedades pr ON c.propiedad_id = pr.id
+      ORDER BY g.nombre
+    ''');
   }
 
   // ════════════════════════════════════════════════════════════════

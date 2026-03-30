@@ -35,6 +35,10 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
   List<PropiedadModel> _propiedades = [];
   List<InquilinoModel> _inquilinos = [];
 
+  // ── Propietario ───────────────────────────────────────────
+  List<Map<String, dynamic>> _propietariosRaw = [];
+  int? _propietarioManualId; // usado cuando propiedad/inquilino no tienen propietario
+
   // ── Períodos ──────────────────────────────────────────────
   DateTime? _fechaInicio;
   int _cuotasTotal = 36;
@@ -42,7 +46,6 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
 
   final _alquilerCtrl = TextEditingController(text: '0');
   final _hastaCuotaCtrl = TextEditingController(text: '12');
-  final _extrasCtrl = TextEditingController(text: '0');
   List<PeriodoFijoModel> _periodosFijos = [];
 
   // ── Recargos ──────────────────────────────────────────────
@@ -57,6 +60,9 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
   bool _rescindido = false;
   DateTime? _fechaRescision;
 
+  // ── Garantes ──────────────────────────────────────────────
+  List<Map<String, dynamic>> _garantes = [];
+
   @override
   void initState() {
     super.initState();
@@ -67,7 +73,6 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
   void dispose() {
     _alquilerCtrl.dispose();
     _hastaCuotaCtrl.dispose();
-    _extrasCtrl.dispose();
     _primerDiaPagoCtrl.dispose();
     _diasGraciaCtrl.dispose();
     _cobrarDesdiaDiaCtrl.dispose();
@@ -82,6 +87,7 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
       final props =
           await _db.obtenerPropiedades();
       final inqs = await _db.obtenerInquilinos();
+      final propsRaw = await _db.obtenerPropietarios();
 
       final propiedades =
           props.map((m) => PropiedadModel.fromMap(m)).toList();
@@ -127,8 +133,6 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
             (d['alquiler_primer_periodo'] as num? ?? 0).toString();
         _hastaCuotaCtrl.text =
             (d['hasta_cuota'] as int? ?? 12).toString();
-        _extrasCtrl.text = (d['extras'] as num? ?? 0).toString();
-
         _primerDiaPagoCtrl.text =
             (d['primer_dia_pago'] as int? ?? 1).toString();
         _diasGraciaCtrl.text = (d['dias_gracia'] as int? ?? 10).toString();
@@ -148,13 +152,16 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
           } catch (_) {}
         }
 
-        // Cargar períodos fijos
+        // Cargar períodos fijos y garantes
         final contratoId = d['id'] as int?;
         if (contratoId != null) {
           final periodosMaps =
               await _db.obtenerPeriodosPorContrato(contratoId);
           _periodosFijos = periodosMaps
               .map((m) => PeriodoFijoModel.fromMap(m))
+              .toList();
+          _garantes = (await _db.obtenerGarantesPorContrato(contratoId))
+              .map((g) => Map<String, dynamic>.from(g))
               .toList();
         }
       }
@@ -165,6 +172,7 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
           _inquilinos = inquilinos;
           _propiedadSel = propSel;
           _inquilinoSel = inqSel;
+          _propietariosRaw = List<Map<String, dynamic>>.from(propsRaw);
         });
       }
     } catch (e) {
@@ -224,19 +232,34 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
       return;
     }
 
+    final propietarioId = _propiedadSel?.propietarioId
+        ?? _inquilinoSel?.propietarioId
+        ?? _propietarioManualId;
+
+    if (propietarioId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+              'Seleccione un propietario para el contrato'),
+          backgroundColor: Color(0xFFC62828),
+        ),
+      );
+      return;
+    }
+
     setState(() => _guardando = true);
     try {
       final Map<String, dynamic> datos = {
         'propiedad_id': _propiedadSel?.id,
         'inquilino_id': _inquilinoSel?.id,
-        'propietario_id': _propiedadSel?.propietarioId ?? 1,
+        'propietario_id': propietarioId,
         'fecha_inicio': _fechaInicio?.toIso8601String(),
         'cuotas_total': _cuotasTotal,
         'fecha_fin': _fechaFin?.toIso8601String(),
         'alquiler_primer_periodo':
             double.tryParse(_alquilerCtrl.text) ?? 0,
         'hasta_cuota': int.tryParse(_hastaCuotaCtrl.text) ?? 12,
-        'extras': double.tryParse(_extrasCtrl.text) ?? 0,
+        'extras': 0,
         'primer_dia_pago':
             int.tryParse(_primerDiaPagoCtrl.text) ?? 1,
         'dias_gracia': int.tryParse(_diasGraciaCtrl.text) ?? 10,
@@ -269,6 +292,9 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
               })
           .toList();
       await _db.upsertPeriodosFijos(contratoId, periodosMaps);
+
+      // Upsert garantes
+      await _db.upsertGarantes(contratoId, _garantes);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -309,10 +335,41 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
     }
   }
 
+  Future<void> _abrirPropietarioDialog() async {
+    final resultado = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder: (_) => const PropietarioDialog(),
+    );
+    if (resultado != null && mounted) {
+      // Recargar propietarios
+      final props = await _db.obtenerPropietarios();
+      _propietariosRaw = props;
+      _propietarioManualId = resultado['propietario_id'] as int?;
+
+      // Si se creó inquilino, recargar y auto-seleccionar
+      final inquilinoId = resultado['inquilino_id'] as int?;
+      if (inquilinoId != null) {
+        final inqs = await _db.obtenerInquilinos();
+        _inquilinos = inqs.map((m) => InquilinoModel.fromMap(m)).toList();
+        _inquilinoSel = _inquilinos
+            .where((i) => i.id == inquilinoId)
+            .firstOrNull;
+      }
+
+      // Recargar propiedades (por si se creó domicilio)
+      final propsData = await _db.obtenerPropiedades();
+      _propiedades = propsData.map((m) => PropiedadModel.fromMap(m)).toList();
+
+      setState(() {});
+    }
+  }
+
   Future<void> _abrirInquilinoDialog() async {
+    // Determinar propietario actual para pasarlo al dialog
+    final propIdActual = _propiedadSel?.propietarioId ?? _propietarioManualId;
     final nuevo = await showDialog<InquilinoModel>(
       context: context,
-      builder: (_) => const InquilinoDialog(),
+      builder: (_) => InquilinoDialog(propietarioId: propIdActual),
     );
     if (nuevo != null && mounted) {
       final inqs = await _db.obtenerInquilinos();
@@ -394,6 +451,8 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                       children: [
                         _seccionRecargos(),
                         const SizedBox(height: 16),
+                        _seccionGarantes(),
+                        const SizedBox(height: 16),
                         _seccionRescindir(),
                       ],
                     ),
@@ -463,8 +522,90 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                   fontSize: 11, color: Color(0xFF1565C0)),
             ),
           ],
+          const SizedBox(height: 10),
+          _filaPropietario(),
         ],
       ),
+    );
+  }
+
+  Widget _filaPropietario() {
+    // Propietario derivado de la propiedad seleccionada
+    if (_propiedadSel?.propietarioId != null) {
+      final p = _propietariosRaw
+          .where((m) => m['id'] == _propiedadSel!.propietarioId)
+          .firstOrNull;
+      final nombre = p?['nombre'] as String? ??
+          'ID: ${_propiedadSel!.propietarioId}';
+      return Row(
+        children: [
+          const Icon(Icons.person_pin_outlined,
+              size: 14, color: Color(0xFF2E7D32)),
+          const SizedBox(width: 4),
+          Text('Propietario: $nombre',
+              style: const TextStyle(
+                  fontSize: 11, color: Color(0xFF2E7D32))),
+        ],
+      );
+    }
+
+    // Propietario derivado del inquilino seleccionado
+    if (_inquilinoSel?.propietarioId != null) {
+      final p = _propietariosRaw
+          .where((m) => m['id'] == _inquilinoSel!.propietarioId)
+          .firstOrNull;
+      final nombre = p?['nombre'] as String? ??
+          'ID: ${_inquilinoSel!.propietarioId}';
+      return Row(
+        children: [
+          const Icon(Icons.person_pin_outlined,
+              size: 14, color: Color(0xFF2E7D32)),
+          const SizedBox(width: 4),
+          Text('Propietario: $nombre',
+              style: const TextStyle(
+                  fontSize: 11, color: Color(0xFF2E7D32))),
+        ],
+      );
+    }
+
+    // Sin propietario derivado → botón Nuevo + dropdown (mismo patrón que Propiedad)
+    return Row(
+      children: [
+        OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: _magenta,
+            side: const BorderSide(color: _magenta),
+          ),
+          onPressed: _abrirPropietarioDialog,
+          icon: const Icon(Icons.person_add_outlined, size: 16),
+          label: const Text('Nuevo Propietario'),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: DropdownButton<int?>(
+            isExpanded: true,
+            value: _propietarioManualId,
+            hint: const Text('O Elegir...'),
+            onChanged: (v) =>
+                setState(() => _propietarioManualId = v),
+            items: [
+              const DropdownMenuItem<int?>(
+                value: null,
+                child: Text('O Elegir...'),
+              ),
+              ..._propietariosRaw.map(
+                (p) => DropdownMenuItem<int?>(
+                  value: p['id'] as int?,
+                  child: Text(
+                    p['nombre'] as String? ?? '',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -666,22 +807,6 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                   ),
                 ),
               ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: TextFormField(
-                  controller: _extrasCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true),
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(
-                        RegExp(r'^\d*\.?\d*'))
-                  ],
-                  decoration: const InputDecoration(
-                    labelText: 'Extras \$',
-                    isDense: true,
-                  ),
-                ),
-              ),
             ],
           ),
         ],
@@ -775,6 +900,148 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
           ),
         ),
       ],
+    );
+  }
+
+  // ── Sección Garantes ───────────────────────────────────────
+
+  Widget _seccionGarantes() {
+    return _seccionCard(
+      titulo: 'Garantes',
+      icono: Icons.verified_user_outlined,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          ..._garantes.asMap().entries.map((entry) {
+            final i = entry.key;
+            final g = entry.value;
+            return Card(
+              margin: const EdgeInsets.only(bottom: 8),
+              elevation: 0,
+              color: const Color(0xFFF5F5F5),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+                side: const BorderSide(color: Color(0xFFE0E0E0)),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text('Garante ${i + 1}',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold, fontSize: 12)),
+                        const Spacer(),
+                        InkWell(
+                          onTap: () => setState(() => _garantes.removeAt(i)),
+                          child: const Icon(Icons.close,
+                              size: 18, color: Color(0xFFC62828)),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    TextFormField(
+                      initialValue: g['nombre'] as String? ?? '',
+                      decoration: const InputDecoration(
+                        labelText: 'Nombre *',
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (v) => _garantes[i]['nombre'] = v.trim(),
+                    ),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextFormField(
+                            initialValue: g['telefono'] as String? ?? '',
+                            decoration: const InputDecoration(
+                              labelText: 'Teléfono',
+                              isDense: true,
+                              border: OutlineInputBorder(),
+                            ),
+                            onChanged: (v) =>
+                                _garantes[i]['telefono'] = v.trim(),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextFormField(
+                            initialValue: g['email'] as String? ?? '',
+                            decoration: const InputDecoration(
+                              labelText: 'Email',
+                              isDense: true,
+                              border: OutlineInputBorder(),
+                            ),
+                            onChanged: (v) => _garantes[i]['email'] = v.trim(),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    const Text('Tipo de garantía:',
+                        style: TextStyle(fontSize: 11, color: Color(0xFF757575))),
+                    const SizedBox(height: 4),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: RadioListTile<String>(
+                            title: const Text('Recibo de sueldo',
+                                style: TextStyle(fontSize: 12)),
+                            value: 'recibo_sueldo',
+                            groupValue:
+                                g['tipo_garantia'] as String? ?? 'recibo_sueldo',
+                            onChanged: (v) =>
+                                setState(() => _garantes[i]['tipo_garantia'] = v),
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ),
+                        Expanded(
+                          child: RadioListTile<String>(
+                            title: const Text('Garantía propietaria',
+                                style: TextStyle(fontSize: 12)),
+                            value: 'garante_propietario',
+                            groupValue:
+                                g['tipo_garantia'] as String? ?? 'recibo_sueldo',
+                            onChanged: (v) =>
+                                setState(() => _garantes[i]['tipo_garantia'] = v),
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+          const SizedBox(height: 4),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              icon: const Icon(Icons.person_add_outlined, size: 18),
+              label: const Text('Agregar garante'),
+              style: OutlinedButton.styleFrom(foregroundColor: _navy),
+              onPressed: () {
+                setState(() {
+                  _garantes.add({
+                    'nombre': '',
+                    'telefono': '',
+                    'email': '',
+                    'tipo_garantia': 'recibo_sueldo',
+                  });
+                });
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -948,6 +1215,7 @@ class _PropiedadDialogState extends State<PropiedadDialog> {
     'Departamento',
     'Local',
     'Terreno',
+    'Quinta',
     'Oficina',
     'Cochera',
     'Otro',
@@ -1111,7 +1379,9 @@ class _PropiedadDialogState extends State<PropiedadDialog> {
 // ════════════════════════════════════════════════════════════
 
 class InquilinoDialog extends StatefulWidget {
-  const InquilinoDialog({super.key});
+  final int? propietarioId;
+  final InquilinoModel? inquilinoExistente;
+  const InquilinoDialog({super.key, this.propietarioId, this.inquilinoExistente});
 
   @override
   State<InquilinoDialog> createState() => _InquilinoDialogState();
@@ -1132,6 +1402,36 @@ class _InquilinoDialogState extends State<InquilinoDialog> {
   final _telefonoAltCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
 
+  // Propietario — se usa el que viene o se elige del dropdown
+  int? _propietarioSelId;
+  List<Map<String, dynamic>> _propietarios = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _propietarioSelId = widget.propietarioId;
+    // Si estamos editando, pre-cargar campos
+    final e = widget.inquilinoExistente;
+    if (e != null) {
+      _nombreCtrl.text = e.nombre;
+      _apellidoCtrl.text = e.apellido ?? '';
+      _domicilioCtrl.text = e.domicilio ?? '';
+      _localidadCtrl.text = e.localidad ?? '';
+      _provinciaCtrl.text = e.provincia ?? '';
+      _telefonoCtrl.text = e.telefono ?? '';
+      _celularCtrl.text = e.celular ?? '';
+      _telefonoAltCtrl.text = e.telefonoAlternativo ?? '';
+      _emailCtrl.text = e.email ?? '';
+      _propietarioSelId ??= e.propietarioId;
+    }
+    _cargarPropietarios();
+  }
+
+  Future<void> _cargarPropietarios() async {
+    final data = await _db.obtenerPropietarios();
+    if (mounted) setState(() => _propietarios = data);
+  }
+
   @override
   void dispose() {
     _nombreCtrl.dispose();
@@ -1148,9 +1448,19 @@ class _InquilinoDialogState extends State<InquilinoDialog> {
 
   Future<void> _guardar() async {
     if (!_formKey.currentState!.validate()) return;
+    if (_propietarioSelId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Seleccione un propietario'),
+          backgroundColor: Color(0xFFC62828),
+        ),
+      );
+      return;
+    }
     setState(() => _guardando = true);
     try {
       final model = InquilinoModel(
+        id: widget.inquilinoExistente?.id,
         nombre: _nombreCtrl.text.trim(),
         apellido: _apellidoCtrl.text.trim(),
         domicilio: _domicilioCtrl.text.trim(),
@@ -1160,10 +1470,16 @@ class _InquilinoDialogState extends State<InquilinoDialog> {
         celular: _celularCtrl.text.trim(),
         telefonoAlternativo: _telefonoAltCtrl.text.trim(),
         email: _emailCtrl.text.trim(),
+        propietarioId: _propietarioSelId,
       );
-      final id = await _db.insertarInquilino(model.toMap());
-      final creado = model.copyWith(id: id);
-      if (mounted) Navigator.pop(context, creado);
+      if (widget.inquilinoExistente != null) {
+        await _db.actualizarInquilino(model.id!, model.toMap());
+        if (mounted) Navigator.pop(context, model);
+      } else {
+        final id = await _db.insertarInquilino(model.toMap());
+        final creado = model.copyWith(id: id);
+        if (mounted) Navigator.pop(context, creado);
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1180,8 +1496,9 @@ class _InquilinoDialogState extends State<InquilinoDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final esEdicion = widget.inquilinoExistente != null;
     return AlertDialog(
-      title: const Text('Nuevo Inquilino'),
+      title: Text(esEdicion ? 'Editar Inquilino' : 'Nuevo Inquilino'),
       content: SizedBox(
         width: 480,
         child: Form(
@@ -1190,6 +1507,29 @@ class _InquilinoDialogState extends State<InquilinoDialog> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
+                // Dropdown propietario
+                DropdownButtonFormField<int>(
+                  value: _propietarioSelId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Propietario *',
+                    isDense: true,
+                    prefixIcon: Icon(Icons.person_outline, size: 18),
+                  ),
+                  items: _propietarios.map((p) {
+                    return DropdownMenuItem<int>(
+                      value: p['id'] as int,
+                      child: Text(
+                        p['nombre'] as String? ?? 'Sin nombre',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    );
+                  }).toList(),
+                  onChanged: (v) => setState(() => _propietarioSelId = v),
+                  validator: (v) =>
+                      v == null ? 'Seleccione un propietario' : null,
+                ),
+                const SizedBox(height: 10),
                 TextFormField(
                   controller: _nombreCtrl,
                   decoration: const InputDecoration(
@@ -1237,7 +1577,7 @@ class _InquilinoDialogState extends State<InquilinoDialog> {
                   child: CircularProgressIndicator(
                       strokeWidth: 2, color: Colors.white),
                 )
-              : const Text('Guardar'),
+              : Text(esEdicion ? 'Actualizar' : 'Guardar'),
         ),
       ],
     );
@@ -1247,6 +1587,234 @@ class _InquilinoDialogState extends State<InquilinoDialog> {
     return TextFormField(
       controller: ctrl,
       decoration: InputDecoration(labelText: label, isDense: true),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// DIALOG: PropietarioDialog
+// ════════════════════════════════════════════════════════════
+
+class PropietarioDialog extends StatefulWidget {
+  const PropietarioDialog({super.key});
+
+  @override
+  State<PropietarioDialog> createState() => _PropietarioDialogState();
+}
+
+class _PropietarioDialogState extends State<PropietarioDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _db = DatabaseHelper();
+  bool _guardando = false;
+
+  // Datos del Propietario
+  final _nombreCtrl = TextEditingController();
+  final _telefonoCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
+
+  // Datos del Inquilino (opcional)
+  final _nombreInquilinoCtrl = TextEditingController();
+  final _telefonoInquilinoCtrl = TextEditingController();
+
+  // Domicilio del Alquiler (opcional)
+  final _direccionCtrl = TextEditingController();
+  final _localidadCtrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _nombreCtrl.dispose();
+    _telefonoCtrl.dispose();
+    _emailCtrl.dispose();
+    _nombreInquilinoCtrl.dispose();
+    _telefonoInquilinoCtrl.dispose();
+    _direccionCtrl.dispose();
+    _localidadCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _guardar() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _guardando = true);
+    try {
+      // 1. Insertar propietario
+      final propietarioId = await _db.insertarPropietario({
+        'nombre': _nombreCtrl.text.trim(),
+        'telefono': _telefonoCtrl.text.trim(),
+        'email': _emailCtrl.text.trim(),
+      });
+
+      // 2. Insertar inquilino (si se completó el nombre)
+      int? inquilinoId;
+      if (_nombreInquilinoCtrl.text.trim().isNotEmpty) {
+        inquilinoId = await _db.insertarInquilino({
+          'nombre': _nombreInquilinoCtrl.text.trim(),
+          'telefono': _telefonoInquilinoCtrl.text.trim(),
+          'propietario_id': propietarioId,
+        });
+      }
+
+      // 3. Insertar domicilio (si se completó la dirección)
+      if (_direccionCtrl.text.trim().isNotEmpty) {
+        await _db.insertarDomicilio({
+          'direccion': _direccionCtrl.text.trim(),
+          'localidad': _localidadCtrl.text.trim(),
+          'propietario_id': propietarioId,
+          'inquilino_id': inquilinoId,
+        });
+      }
+
+      if (mounted) {
+        Navigator.pop(context, {
+          'propietario_id': propietarioId,
+          'nombre': _nombreCtrl.text.trim(),
+          'inquilino_id': inquilinoId,
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error al guardar: $e'),
+            backgroundColor: const Color(0xFFC62828),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _guardando = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Nuevo Propietario'),
+      content: SizedBox(
+        width: 500,
+        child: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // ── Datos del Propietario ────────────────
+                _seccionTitulo('Datos del Propietario', Icons.person),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: _nombreCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Nombre completo *',
+                    prefixIcon: Icon(Icons.badge_outlined, size: 20),
+                  ),
+                  validator: (v) => (v == null || v.trim().isEmpty)
+                      ? 'El nombre es obligatorio'
+                      : null,
+                ),
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: _telefonoCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Teléfono',
+                    prefixIcon: Icon(Icons.phone_outlined, size: 20),
+                  ),
+                  keyboardType: TextInputType.phone,
+                ),
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: _emailCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Email',
+                    prefixIcon: Icon(Icons.email_outlined, size: 20),
+                  ),
+                  keyboardType: TextInputType.emailAddress,
+                ),
+
+                const SizedBox(height: 18),
+                const Divider(),
+                const SizedBox(height: 8),
+
+                // ── Datos del Inquilino ─────────────────
+                _seccionTitulo('Datos del Inquilino', Icons.people),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: _nombreInquilinoCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Nombre del inquilino',
+                    prefixIcon: Icon(Icons.person_outline, size: 20),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: _telefonoInquilinoCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Teléfono del inquilino',
+                    prefixIcon: Icon(Icons.phone_outlined, size: 20),
+                  ),
+                  keyboardType: TextInputType.phone,
+                ),
+
+                const SizedBox(height: 18),
+                const Divider(),
+                const SizedBox(height: 8),
+
+                // ── Domicilio del Alquiler ──────────────
+                _seccionTitulo('Domicilio del Alquiler', Icons.home),
+                const SizedBox(height: 8),
+                TextFormField(
+                  controller: _direccionCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Dirección',
+                    prefixIcon: Icon(Icons.location_on_outlined, size: 20),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: _localidadCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Localidad / Ciudad',
+                    prefixIcon: Icon(Icons.location_city_outlined, size: 20),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _guardando ? null : () => Navigator.pop(context),
+          child: const Text('Cancelar'),
+        ),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: const Color(0xFFC2185B),
+            foregroundColor: Colors.white,
+          ),
+          onPressed: _guardando ? null : _guardar,
+          child: _guardando
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(
+                      strokeWidth: 2, color: Colors.white),
+                )
+              : const Text('Registrar Propietario'),
+        ),
+      ],
+    );
+  }
+
+  Widget _seccionTitulo(String titulo, IconData icono) {
+    return Row(
+      children: [
+        Icon(icono, size: 16, color: const Color(0xFFC2185B)),
+        const SizedBox(width: 6),
+        Text(titulo,
+            style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFFC2185B))),
+      ],
     );
   }
 }

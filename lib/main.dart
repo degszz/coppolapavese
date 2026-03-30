@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'database/db_config.dart';
 import 'screens/home_screen.dart';
 
 void main() async {
@@ -13,6 +14,9 @@ void main() async {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
+
+  // Cargar configuración de ruta de BD (local o red)
+  await DbConfig.instance.cargar();
 
   // Inicializar datos de locale para formateo de fechas en español
   await initializeDateFormatting('es_AR', null);

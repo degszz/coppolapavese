@@ -237,6 +237,59 @@ class _PropietarioFormScreenState extends State<PropietarioFormScreen> {
     }
   }
 
+  Future<void> _confirmarEliminarInquilino() async {
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Eliminar inquilino'),
+        content: const Text(
+          '¿Estás seguro de eliminar este inquilino?\n\n'
+          'Se eliminarán también sus recibos y datos asociados.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFC62828)),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmar == true && mounted) {
+      try {
+        await _db.eliminarInquilino(_inquilinoId!);
+        setState(() {
+          _inquilinoId = null;
+          _nombreInquilinoCtrl.clear();
+          _telefonoInquilinoCtrl.clear();
+        });
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Inquilino eliminado'),
+              backgroundColor: Color(0xFF2E7D32),
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error al eliminar: $e'),
+              backgroundColor: const Color(0xFFC62828),
+            ),
+          );
+        }
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -306,6 +359,19 @@ class _PropietarioFormScreenState extends State<PropietarioFormScreen> {
                   icono: Icons.phone_outlined,
                   teclado: TextInputType.phone,
                 ),
+                if (_esEdicion && _inquilinoId != null) ...[
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      icon: const Icon(Icons.delete_outline, size: 18),
+                      label: const Text('Eliminar inquilino'),
+                      style: TextButton.styleFrom(
+                          foregroundColor: const Color(0xFFC62828)),
+                      onPressed: _confirmarEliminarInquilino,
+                    ),
+                  ),
+                ],
               ],
             ),
             const SizedBox(height: 16),

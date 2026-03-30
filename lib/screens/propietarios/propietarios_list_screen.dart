@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../database/database_helper.dart';
@@ -17,18 +18,36 @@ class _PropietariosListScreenState extends State<PropietariosListScreen> {
   List<Map<String, dynamic>> _propietariosFiltrados = [];
   bool _cargando = true;
   final _busquedaController = TextEditingController();
+  Timer? _autoRefresh;
 
   @override
   void initState() {
     super.initState();
     _cargarPropietarios();
     _busquedaController.addListener(_filtrar);
+    _autoRefresh = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => _refrescoSilencioso(),
+    );
   }
 
   @override
   void dispose() {
+    _autoRefresh?.cancel();
     _busquedaController.dispose();
     super.dispose();
+  }
+
+  Future<void> _refrescoSilencioso() async {
+    try {
+      final data = await _db.obtenerResumenPorPropietario();
+      if (mounted) {
+        setState(() {
+          _propietarios = data;
+          _filtrar();
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _cargarPropietarios() async {

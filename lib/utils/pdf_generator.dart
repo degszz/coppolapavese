@@ -10,8 +10,11 @@ class PdfGenerator {
   static const _darkColor     = PdfColor.fromInt(0xFF212121);
   static const _grayColor     = PdfColor.fromInt(0xFF757575);
   static const _lightGray     = PdfColor.fromInt(0xFFF5F5F5);
+  // ignore: unused_field
   static const _greenColor    = PdfColor.fromInt(0xFF2E7D32);
+  // ignore: unused_field
   static const _blueColor     = PdfColor.fromInt(0xFF1565C0);
+  // ignore: unused_field
   static const _redColor      = PdfColor.fromInt(0xFFC62828);
 
   // Datos de la empresa (constantes)
@@ -30,12 +33,12 @@ class PdfGenerator {
     final fmt      = DateFormat('dd/MM/yyyy');
     final fmtMonto = NumberFormat.currency(locale: 'es_AR', symbol: '\$', decimalDigits: 2);
 
-    final montoLetras = numeroALetras(recibo.montoTotal);
+    final montoLetras = recibo.esNeutro ? '___________________________' : numeroALetras(recibo.montoTotal);
 
     // Cargar logo
     pw.MemoryImage? logoImg;
     try {
-      final logoData = await rootBundle.load('assets/images/logo.png');
+      final logoData = await rootBundle.load('assets/images/cp.png');
       logoImg = pw.MemoryImage(logoData.buffer.asUint8List());
     } catch (_) {}
 
@@ -72,6 +75,7 @@ class PdfGenerator {
                 flex: 48,
                 child: _seccionCopia(
                   recibo, fmt, fmtMonto, montoLetras,
+                  logoImg: logoImg,
                   esSinPunitorios: esSinPunitorios,
                   tieneNotas: tieneNotas,
                 ),
@@ -114,7 +118,7 @@ class PdfGenerator {
           children: [
             // Logo + datos empresa
             if (logoImg != null)
-              pw.Image(logoImg, width: 36, height: 36),
+              pw.Image(logoImg, width: 52, height: 52),
             if (logoImg != null) pw.SizedBox(width: 6),
             pw.Expanded(
               child: pw.Column(
@@ -132,44 +136,23 @@ class PdfGenerator {
                 ],
               ),
             ),
-            // Badge X + ORIGINAL + datos recibo
+            // Badge ORIGINAL + datos recibo
             pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.end,
               children: [
-                pw.Row(
-                  children: [
-                    // Badge "X DOCUMENTO NO VALIDO COMO FACTURA"
-                    pw.Container(
-                      padding: const pw.EdgeInsets.symmetric(
-                          horizontal: 5, vertical: 2),
-                      decoration: pw.BoxDecoration(
-                        border: pw.Border.all(
-                            color: _darkColor, width: 0.8),
-                      ),
-                      child: pw.Text(
-                        'X  DOCUMENTO NO VALIDO COMO FACTURA',
-                        style: pw.TextStyle(
-                            fontSize: 5.5,
-                            fontWeight: pw.FontWeight.bold,
-                            color: _darkColor),
-                      ),
-                    ),
-                    pw.SizedBox(width: 6),
-                    pw.Container(
-                      padding: const pw.EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 2),
-                      decoration: pw.BoxDecoration(
-                        border: pw.Border.all(color: _darkColor),
-                      ),
-                      child: pw.Text(
-                        'ORIGINAL',
-                        style: pw.TextStyle(
-                            fontSize: 9,
-                            fontWeight: pw.FontWeight.bold,
-                            color: _darkColor),
-                      ),
-                    ),
-                  ],
+                pw.Container(
+                  padding: const pw.EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 2),
+                  decoration: pw.BoxDecoration(
+                    border: pw.Border.all(color: _darkColor),
+                  ),
+                  child: pw.Text(
+                    'ORIGINAL',
+                    style: pw.TextStyle(
+                        fontSize: 9,
+                        fontWeight: pw.FontWeight.bold,
+                        color: _darkColor),
+                  ),
                 ),
                 pw.SizedBox(height: 3),
                 _miniInfoFila('Recibo:', '${recibo.numeroRecibo}'),
@@ -182,48 +165,42 @@ class PdfGenerator {
         ),
         pw.SizedBox(height: 5),
 
-        // ── TÍTULO ────────────────────────────────────────────
-        _barraLinea(),
-        pw.Center(
-          child: pw.Padding(
-            padding: const pw.EdgeInsets.symmetric(vertical: 3),
-            child: pw.Text(
-              'RECIBO POR CUENTA Y ORDEN DE TERCEROS',
-              style: pw.TextStyle(
-                  fontWeight: pw.FontWeight.bold,
-                  fontSize: 9,
-                  color: _darkColor,
-                  letterSpacing: 1),
-            ),
-          ),
-        ),
-        _barraLinea(),
-        pw.SizedBox(height: 4),
-
         // ── LOCADOR / LOCATARIO ───────────────────────────────
         pw.Row(
           children: [
-            pw.RichText(
-              text: pw.TextSpan(
-                style: pw.TextStyle(fontSize: 8, color: _darkColor),
-                children: [
-                  pw.TextSpan(
-                      text: 'LOCADOR: ',
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-                  pw.TextSpan(text: locador),
-                ],
+            pw.Expanded(
+              child: pw.Container(
+                padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                decoration: pw.BoxDecoration(
+                  border: pw.Border.all(color: _grayColor, width: 0.5),
+                ),
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Text('LOCADOR',
+                        style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold, color: _darkColor)),
+                    pw.SizedBox(height: 2),
+                    pw.Text(locador, style: pw.TextStyle(fontSize: 8, color: _darkColor)),
+                  ],
+                ),
               ),
             ),
-            pw.SizedBox(width: 20),
-            pw.RichText(
-              text: pw.TextSpan(
-                style: pw.TextStyle(fontSize: 8, color: _darkColor),
-                children: [
-                  pw.TextSpan(
-                      text: 'LOCATARIO: ',
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-                  pw.TextSpan(text: locatario),
-                ],
+            pw.SizedBox(width: 6),
+            pw.Expanded(
+              child: pw.Container(
+                padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                decoration: pw.BoxDecoration(
+                  border: pw.Border.all(color: _grayColor, width: 0.5),
+                ),
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Text('LOCATARIO',
+                        style: pw.TextStyle(fontSize: 7, fontWeight: pw.FontWeight.bold, color: _darkColor)),
+                    pw.SizedBox(height: 2),
+                    pw.Text(locatario, style: pw.TextStyle(fontSize: 8, color: _darkColor)),
+                  ],
+                ),
               ),
             ),
           ],
@@ -231,7 +208,12 @@ class PdfGenerator {
         pw.SizedBox(height: 5),
 
         // ── PÁRRAFO MONTO ─────────────────────────────────────
-        pw.RichText(
+        pw.Container(
+          padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          decoration: pw.BoxDecoration(
+            border: pw.Border.all(color: _grayColor, width: 0.5),
+          ),
+          child: pw.RichText(
           text: pw.TextSpan(
             style: pw.TextStyle(fontSize: 8, color: _darkColor, lineSpacing: 3),
             children: [
@@ -250,6 +232,7 @@ class PdfGenerator {
               const pw.TextSpan(text: '.'),
             ],
           ),
+        ),
         ),
         pw.SizedBox(height: 5),
 
@@ -313,6 +296,7 @@ class PdfGenerator {
     DateFormat fmt,
     NumberFormat fmtMonto,
     String montoLetras, {
+    pw.MemoryImage? logoImg,
     bool esSinPunitorios = false,
     bool tieneNotas = false,
   }) {
@@ -332,11 +316,20 @@ class PdfGenerator {
         pw.Row(
           crossAxisAlignment: pw.CrossAxisAlignment.start,
           children: [
+            // Logo
+            if (logoImg != null)
+              pw.Image(logoImg, width: 36, height: 36),
+            if (logoImg != null) pw.SizedBox(width: 6),
             // Datos del inquilino (izquierda)
             pw.Expanded(
               child: pw.Column(
                 crossAxisAlignment: pw.CrossAxisAlignment.start,
                 children: [
+                  pw.Text(_empresa,
+                      style: pw.TextStyle(
+                          fontWeight: pw.FontWeight.bold,
+                          fontSize: 8,
+                          color: _darkColor)),
                   _miniInfoFila('Señor(es):', locatario),
                   if (recibo.direccionCompleta.isNotEmpty)
                     _miniInfoFila('Domicilio:', recibo.direccionCompleta),
@@ -384,27 +377,39 @@ class PdfGenerator {
         // ── LOCADOR / LOCATARIO ───────────────────────────────
         pw.Row(
           children: [
-            pw.RichText(
-              text: pw.TextSpan(
-                style: pw.TextStyle(fontSize: 7.5, color: _darkColor),
-                children: [
-                  pw.TextSpan(
-                      text: 'LOCADOR: ',
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-                  pw.TextSpan(text: locador),
-                ],
+            pw.Expanded(
+              child: pw.Container(
+                padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+                decoration: pw.BoxDecoration(
+                  border: pw.Border.all(color: _grayColor, width: 0.5),
+                ),
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Text('LOCADOR',
+                        style: pw.TextStyle(fontSize: 6.5, fontWeight: pw.FontWeight.bold, color: _darkColor)),
+                    pw.SizedBox(height: 1),
+                    pw.Text(locador, style: pw.TextStyle(fontSize: 7.5, color: _darkColor)),
+                  ],
+                ),
               ),
             ),
-            pw.SizedBox(width: 16),
-            pw.RichText(
-              text: pw.TextSpan(
-                style: pw.TextStyle(fontSize: 7.5, color: _darkColor),
-                children: [
-                  pw.TextSpan(
-                      text: 'LOCATARIO: ',
-                      style: pw.TextStyle(fontWeight: pw.FontWeight.bold)),
-                  pw.TextSpan(text: locatario),
-                ],
+            pw.SizedBox(width: 4),
+            pw.Expanded(
+              child: pw.Container(
+                padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+                decoration: pw.BoxDecoration(
+                  border: pw.Border.all(color: _grayColor, width: 0.5),
+                ),
+                child: pw.Column(
+                  crossAxisAlignment: pw.CrossAxisAlignment.start,
+                  children: [
+                    pw.Text('LOCATARIO',
+                        style: pw.TextStyle(fontSize: 6.5, fontWeight: pw.FontWeight.bold, color: _darkColor)),
+                    pw.SizedBox(height: 1),
+                    pw.Text(locatario, style: pw.TextStyle(fontSize: 7.5, color: _darkColor)),
+                  ],
+                ),
               ),
             ),
           ],
@@ -412,7 +417,12 @@ class PdfGenerator {
         pw.SizedBox(height: 4),
 
         // ── PÁRRAFO MONTO ─────────────────────────────────────
-        pw.RichText(
+        pw.Container(
+          padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+          decoration: pw.BoxDecoration(
+            border: pw.Border.all(color: _grayColor, width: 0.5),
+          ),
+          child: pw.RichText(
           text: pw.TextSpan(
             style: pw.TextStyle(fontSize: 7.5, color: _darkColor, lineSpacing: 2.5),
             children: [
@@ -430,6 +440,7 @@ class PdfGenerator {
               const pw.TextSpan(text: '.'),
             ],
           ),
+        ),
         ),
         pw.SizedBox(height: 4),
 
@@ -492,20 +503,20 @@ class PdfGenerator {
           padding: pw.EdgeInsets.symmetric(horizontal: 4, vertical: pad),
           child: pw.Text(t,
               style: pw.TextStyle(
-                  color: PdfColors.white,
+                  color: _darkColor,
                   fontWeight: pw.FontWeight.bold,
                   fontSize: fsTh),
               textAlign: center ? pw.TextAlign.center : pw.TextAlign.left),
         );
 
-    pw.Widget td(String t, {bool center = false, bool bold = false, PdfColor? color}) =>
+    pw.Widget td(String t, {bool center = false, bool bold = false}) =>
         pw.Padding(
           padding: pw.EdgeInsets.symmetric(horizontal: 4, vertical: pad),
           child: pw.Text(t,
               style: pw.TextStyle(
                   fontSize: fs,
                   fontWeight: bold ? pw.FontWeight.bold : pw.FontWeight.normal,
-                  color: color ?? _darkColor),
+                  color: _darkColor),
               textAlign: center ? pw.TextAlign.center : pw.TextAlign.left),
         );
 
@@ -513,7 +524,18 @@ class PdfGenerator {
         (s) => s.fechaVence != null && s.fechaVence!.isNotEmpty);
     final fmtDate = DateFormat('dd/MM/yyyy');
 
+    final totalGeneral = recibo.servicios.fold<double>(
+        0, (sum, s) => sum + s.total);
+
     return pw.Table(
+      border: pw.TableBorder(
+        top:              const pw.BorderSide(width: 0.8, color: _darkColor),
+        bottom:           const pw.BorderSide(width: 0.8, color: _darkColor),
+        left:             const pw.BorderSide(width: 0.5, color: _darkColor),
+        right:            const pw.BorderSide(width: 0.5, color: _darkColor),
+        horizontalInside: const pw.BorderSide(width: 0.4, color: _grayColor),
+        verticalInside:   const pw.BorderSide(width: 0.4, color: _grayColor),
+      ),
       columnWidths: {
         if (hasFechaVence) 0: const pw.FixedColumnWidth(52),
         (hasFechaVence ? 1 : 0): const pw.FlexColumnWidth(4),
@@ -522,9 +544,9 @@ class PdfGenerator {
         (hasFechaVence ? 4 : 3): const pw.FlexColumnWidth(2),
       },
       children: [
-        // Encabezado
+        // Encabezado — sin fondo, solo texto negro bold
         pw.TableRow(
-          decoration: const pw.BoxDecoration(color: _darkColor),
+          decoration: const pw.BoxDecoration(color: PdfColors.white),
           children: [
             if (hasFechaVence) th('Vence', center: true),
             th('Descripción'),
@@ -550,13 +572,24 @@ class PdfGenerator {
             children: [
               if (hasFechaVence) td(venceStr, center: true),
               td(s.descripcion),
-              td(fmt.format(s.monto), center: true),
-              td(s.punitorios > 0 ? fmt.format(s.punitorios) : '\$0,00',
+              td(recibo.esNeutro ? '____________' : fmt.format(s.monto), center: true),
+              td(recibo.esNeutro ? '____________' : (s.punitorios > 0 ? fmt.format(s.punitorios) : '\$0,00'),
                   center: true),
-              td(fmt.format(s.total), center: true, bold: true),
+              td(recibo.esNeutro ? '____________' : fmt.format(s.total), center: true, bold: true),
             ],
           );
         }),
+        // Fila total
+        pw.TableRow(
+          decoration: const pw.BoxDecoration(color: _lightGray),
+          children: [
+            if (hasFechaVence) td(''),
+            td('TOTAL', bold: true),
+            td(''),
+            td(''),
+            td(recibo.esNeutro ? '____________' : fmt.format(totalGeneral), center: true, bold: true),
+          ],
+        ),
       ],
     );
   }
@@ -596,17 +629,15 @@ class PdfGenerator {
       );
     }
 
-    final colorSaldo = recibo.saldo > 0 ? _redColor : _greenColor;
-
     return pw.Column(
       crossAxisAlignment: pw.CrossAxisAlignment.end,
       children: [
-        fila('Monto a Abonar:', fmt.format(recibo.montoTotal), _blueColor),
+        fila('Monto a Abonar:', recibo.esNeutro ? '____________' : fmt.format(recibo.montoTotal), _darkColor),
         pw.SizedBox(height: 2),
-        fila('TOTAL ABONADO:', fmt.format(recibo.montoAbonado), _greenColor,
+        fila('TOTAL ABONADO:', recibo.esNeutro ? '____________' : fmt.format(recibo.montoAbonado), _darkColor,
             negrita: true),
         pw.SizedBox(height: 2),
-        fila('Saldo:', fmt.format(recibo.saldo), colorSaldo, negrita: true),
+        fila('Saldo:', recibo.esNeutro ? '____________' : fmt.format(recibo.saldo), _darkColor, negrita: true),
       ],
     );
   }

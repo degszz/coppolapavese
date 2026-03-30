@@ -40,6 +40,7 @@ class ExcelGenerator {
             .toList(),
         'Recibos Pendientes',
         'pendiente');
+    _crearHojaInquilinos(excel, todosLosRecibos);
 
     // Eliminar hoja por defecto si existe
     if (excel.sheets.containsKey('Sheet1')) {
@@ -385,5 +386,72 @@ class ExcelGenerator {
       default:
         return estado;
     }
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // HOJA 5 — REPORTE POR INQUILINO
+  // ════════════════════════════════════════════════════════════════
+
+  static void _crearHojaInquilinos(
+      Excel excel, List<Map<String, dynamic>> recibos) {
+    final sheet = excel['Reporte Inquilinos'];
+
+    // Título
+    _celdaTitulo(sheet, 0, 0,
+        'COPPOLA PAVESE INMOBILIARIA — REPORTE POR INQUILINO', 5);
+    _celdaTitulo(sheet, 1, 0,
+        'Generado: ${_fmtFecha.format(DateTime.now())}', 5);
+    sheet.appendRow([TextCellValue('')]);
+
+    // Encabezados
+    final headers = [
+      'Inquilino',
+      'Alquiler Mes',
+      'Adm. 5% Inmob.',
+      'Total Propietario',
+      'Observaciones',
+    ];
+    final filaEnc = sheet.maxRows;
+    _agregarEncabezados(sheet, filaEnc, headers);
+
+    // Datos — una fila por recibo
+    double sumAlquiler = 0;
+    double sumAdm = 0;
+    double sumProp = 0;
+
+    for (int i = 0; i < recibos.length; i++) {
+      final r = recibos[i];
+      final inquilino = r['inquilino_nombre'] as String? ?? 'Sin inquilino';
+      final montoTotal = (r['monto_total'] as num?)?.toDouble() ?? 0.0;
+      final admInmob = montoTotal * 0.05;
+      final totalPropietario = montoTotal - admInmob;
+      final notas = r['notas'] as String? ?? '';
+
+      sumAlquiler += montoTotal;
+      sumAdm += admInmob;
+      sumProp += totalPropietario;
+
+      final fillFila = i % 2 == 0 ? _filaParFill : _filaImparFill;
+
+      _agregarFilaResumen(sheet, [
+        inquilino,
+        _fmtMonto.format(montoTotal),
+        _fmtMonto.format(admInmob),
+        _fmtMonto.format(totalPropietario),
+        notas,
+      ], fillFila, i % 2 == 0);
+    }
+
+    // Fila de totales
+    _agregarFilaTotales(sheet, [
+      'TOTALES',
+      _fmtMonto.format(sumAlquiler),
+      _fmtMonto.format(sumAdm),
+      _fmtMonto.format(sumProp),
+      '',
+    ]);
+
+    // Anchos
+    _ajustarAnchos(sheet, [28, 20, 20, 20, 35]);
   }
 }

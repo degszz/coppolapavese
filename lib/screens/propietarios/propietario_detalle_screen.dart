@@ -993,14 +993,14 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
         dir.isNotEmpty ? 'correspondiente a *$dir* ' : '';
 
     final String mensaje = esPago
-        ? 'Hola $nombre! 🏠\n'
+        ? 'Hola $nombre!\n'
             'Le informamos que el recibo N° $numero por *${fmt.format(monto)}* '
-            '${dirPart}ha sido registrado como *PAGADO*. ✅\n'
+            '${dirPart}ha sido registrado como *PAGADO*.\n'
             '¡Muchas gracias por su pago!\n'
             '_Coppola Pavese Inmobiliaria_'
-        : 'Hola $nombre! 🏠\n'
+        : 'Hola $nombre!\n'
             'Le recordamos que el recibo N° $numero por *${fmt.format(monto)}* '
-            '${dirPart}se encuentra *pendiente de pago*. ⏳\n'
+            '${dirPart}se encuentra *pendiente de pago*.\n'
             'Por favor, realice el pago a la brevedad.\n'
             '_Coppola Pavese Inmobiliaria_';
 

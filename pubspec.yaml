@@ -57,6 +57,9 @@ dependencies:
   # Compartir archivos
   share_plus: ^10.1.2
 
+  # Selector de carpeta
+  file_picker: ^8.0.0
+
   # Permisos (Android/iOS)
   permission_handler: ^11.3.1
 

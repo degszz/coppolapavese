@@ -27,6 +27,9 @@ class ReciboModel {
   final String? direccion;
   final String? localidad;
 
+  // Flag para recibo en blanco (no se guarda en BD)
+  final bool esNeutro;
+
   // Servicios asociados (se cargan aparte)
   final List<ServicioItemModel> servicios;
 
@@ -54,6 +57,7 @@ class ReciboModel {
     this.inquilinoTelefono,
     this.direccion,
     this.localidad,
+    this.esNeutro = false,
     this.servicios = const [],
   });
 
@@ -132,6 +136,7 @@ class ReciboModel {
     String? direccion,
     String? localidad,
     List<ServicioItemModel>? servicios,
+    bool? esNeutro,
   }) =>
       ReciboModel(
         id: id ?? this.id,
@@ -157,6 +162,7 @@ class ReciboModel {
         inquilinoTelefono: inquilinoTelefono ?? this.inquilinoTelefono,
         direccion: direccion ?? this.direccion,
         localidad: localidad ?? this.localidad,
+        esNeutro: esNeutro ?? this.esNeutro,
         servicios: servicios ?? this.servicios,
       );
 

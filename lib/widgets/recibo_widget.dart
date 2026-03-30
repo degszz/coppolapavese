@@ -16,8 +16,11 @@ class ReciboWidget extends StatelessWidget {
   static const _dark    = Color(0xFF212121);
   static const _gray    = Color(0xFF757575);
   static const _lightGray = Color(0xFFF5F5F5);
+  // ignore: unused_field
   static const _green   = Color(0xFF2E7D32);
+  // ignore: unused_field
   static const _blue    = Color(0xFF1565C0);
+  // ignore: unused_field
   static const _red     = Color(0xFFC62828);
 
   static const _empresa        = 'COPPOLA PAVESE Inmobiliaria';
@@ -51,11 +54,13 @@ class ReciboWidget extends StatelessWidget {
   Widget _seccionOriginal() {
     final fmt    = DateFormat('dd/MM/yyyy');
     final fmtNum = NumberFormat.currency(locale: 'es_AR', symbol: '\$', decimalDigits: 2);
+    // Helper: en recibo neutro, montos => línea en blanco
+    String fmtM(double v) => recibo.esNeutro ? '____________' : fmtNum.format(v);
 
     String fechaStr = recibo.fechaEmision;
     try { fechaStr = fmt.format(DateTime.parse(recibo.fechaEmision)); } catch (_) {}
 
-    final montoLetras = numeroALetras(recibo.montoTotal);
+    final montoLetras = recibo.esNeutro ? '___________________________' : numeroALetras(recibo.montoTotal);
     final locador     = recibo.propietarioNombre ?? '___________';
     final locatario   = recibo.inquilinoNombre   ?? '___________';
     final domicilio   = recibo.direccionCompleta.isNotEmpty
@@ -72,9 +77,9 @@ class ReciboWidget extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               // Logo
-              Image.asset('assets/images/logo.png',
-                  width: 64, height: 64, fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => const SizedBox(width: 64, height: 64)),
+              Image.asset('assets/images/cp.png',
+                  width: 90, height: 90, fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const SizedBox(width: 90, height: 90)),
               const SizedBox(width: 12),
               // Empresa
               Expanded(
@@ -95,16 +100,8 @@ class ReciboWidget extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              // Badges
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  _badge('X  DOCUMENTO NO VALIDO COMO FACTURA',
-                      bg: _red, size: 8),
-                  const SizedBox(height: 4),
-                  _badge('ORIGINAL', bg: _navy, size: 10),
-                ],
-              ),
+              // Badge
+              _badge('ORIGINAL', bg: _navy, size: 10),
             ],
           ),
           const SizedBox(height: 10),
@@ -130,23 +127,6 @@ class ReciboWidget extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 8),
-
-          // ── Doble línea ───────────────────────────────────────
-          _dobleLinea(),
-          const SizedBox(height: 6),
-          Center(
-            child: Text(
-              'RECIBO POR CUENTA Y ORDEN DE TERCEROS',
-              style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: _dark,
-                  letterSpacing: 0.5),
-            ),
-          ),
-          const SizedBox(height: 6),
-          _dobleLinea(),
           const SizedBox(height: 10),
 
           // ── LOCADOR / LOCATARIO ───────────────────────────────
@@ -157,7 +137,7 @@ class ReciboWidget extends StatelessWidget {
           _parrafoBorde(
             'POR MANDATO DEL LOCADOR RECIBI DEL LOCATARIO LA SUMA DE '
             '${montoLetras.toUpperCase()} '
-            '(${fmtNum.format(recibo.montoTotal)}) '
+            '(${fmtM(recibo.montoTotal)}) '
             'POR EL ALQUILER DE UNA PROPIEDAD UBICADA EN $domicilio.',
           ),
           const SizedBox(height: 10),
@@ -224,11 +204,12 @@ class ReciboWidget extends StatelessWidget {
   Widget _seccionCopia() {
     final fmt    = DateFormat('dd/MM/yyyy');
     final fmtNum = NumberFormat.currency(locale: 'es_AR', symbol: '\$', decimalDigits: 2);
+    String fmtM(double v) => recibo.esNeutro ? '____________' : fmtNum.format(v);
 
     String fechaStr = recibo.fechaEmision;
     try { fechaStr = fmt.format(DateTime.parse(recibo.fechaEmision)); } catch (_) {}
 
-    final montoLetras = numeroALetras(recibo.montoTotal);
+    final montoLetras = recibo.esNeutro ? '___________________________' : numeroALetras(recibo.montoTotal);
     final locador     = recibo.propietarioNombre ?? '___________';
     final locatario   = recibo.inquilinoNombre   ?? '___________';
     final domicilio   = recibo.direccionCompleta.isNotEmpty
@@ -244,9 +225,9 @@ class ReciboWidget extends StatelessWidget {
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Image.asset('assets/images/logo.png',
-                  width: 48, height: 48, fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => const SizedBox(width: 48, height: 48)),
+              Image.asset('assets/images/cp.png',
+                  width: 64, height: 64, fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const SizedBox(width: 64, height: 64)),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(
@@ -298,7 +279,7 @@ class ReciboWidget extends StatelessWidget {
           _parrafoBorde(
             'POR MANDATO DEL LOCADOR RECIBI DEL LOCATARIO LA SUMA DE '
             '${montoLetras.toUpperCase()} '
-            '(${fmtNum.format(recibo.montoTotal)}) '
+            '(${fmtM(recibo.montoTotal)}) '
             'POR EL ALQUILER DE UNA PROPIEDAD UBICADA EN $domicilio.',
             small: true,
           ),
@@ -363,13 +344,15 @@ class ReciboWidget extends StatelessWidget {
     bool small = false,
   }) {
     final fs = small ? 10.0 : 11.0;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-          color: _lightGray, borderRadius: BorderRadius.circular(4)),
-      child: Row(
-        children: [
-          Expanded(
+    return Row(
+      children: [
+        Expanded(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              border: Border.all(color: const Color(0xFFBDBDBD)),
+              borderRadius: BorderRadius.circular(4),
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -377,16 +360,23 @@ class ReciboWidget extends StatelessWidget {
                     style: TextStyle(
                         fontSize: fs - 1,
                         fontWeight: FontWeight.bold,
-                        color: _green)),
+                        color: _dark)),
+                const SizedBox(height: 2),
                 Text(locador,
                     style: TextStyle(fontSize: fs, color: _dark),
                     overflow: TextOverflow.ellipsis),
               ],
             ),
           ),
-          Container(width: 1, height: 32, color: Colors.grey.shade300,
-              margin: const EdgeInsets.symmetric(horizontal: 10)),
-          Expanded(
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              border: Border.all(color: const Color(0xFFBDBDBD)),
+              borderRadius: BorderRadius.circular(4),
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -394,22 +384,24 @@ class ReciboWidget extends StatelessWidget {
                     style: TextStyle(
                         fontSize: fs - 1,
                         fontWeight: FontWeight.bold,
-                        color: _blue)),
+                        color: _dark)),
+                const SizedBox(height: 2),
                 Text(locatario,
                     style: TextStyle(fontSize: fs, color: _dark),
                     overflow: TextOverflow.ellipsis),
               ],
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
   Widget _parrafoBorde(String texto, {bool small = false}) {
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(10),
+      padding: EdgeInsets.symmetric(
+          horizontal: small ? 10 : 14, vertical: small ? 10 : 14),
       decoration: BoxDecoration(
           border: Border.all(color: const Color(0xFFBDBDBD)),
           borderRadius: BorderRadius.circular(4)),
@@ -417,25 +409,31 @@ class ReciboWidget extends StatelessWidget {
           style: TextStyle(
               fontSize: small ? 9.5 : 11,
               color: _dark,
-              height: 1.5)),
+              height: 1.6)),
     );
   }
 
   Widget _tablaServicios({bool small = false}) {
-    final fmt = NumberFormat.currency(locale: 'es_AR', symbol: '\$', decimalDigits: 2);
+    final fmtRaw = NumberFormat.currency(locale: 'es_AR', symbol: '\$', decimalDigits: 2);
+    String fmt(double v) => recibo.esNeutro ? '____________' : fmtRaw.format(v);
     final fs  = small ? 9.5 : 11.0;
     final fsH = small ? 9.0 : 10.0;
 
-    // Detect if any service has fechaVence
     final tieneVence = recibo.servicios.any(
         (s) => s.fechaVence != null && s.fechaVence!.isNotEmpty);
     final fmtVence = DateFormat('dd/MM');
 
+    final totalGeneral = recibo.servicios.fold<double>(
+        0, (sum, s) => sum + s.total);
+
     return Table(
       border: TableBorder(
-        top:    const BorderSide(color: _dark, width: 0.5),
-        bottom: const BorderSide(color: Colors.grey),
-        horizontalInside: const BorderSide(color: Color(0xFFEEEEEE), width: 0.5),
+        top:              const BorderSide(color: _dark, width: 1),
+        bottom:           const BorderSide(color: _dark, width: 1),
+        horizontalInside: const BorderSide(color: Color(0xFFCCCCCC), width: 0.5),
+        left:             const BorderSide(color: _dark, width: 0.5),
+        right:            const BorderSide(color: _dark, width: 0.5),
+        verticalInside:   const BorderSide(color: Color(0xFFCCCCCC), width: 0.5),
       ),
       columnWidths: tieneVence
           ? {
@@ -452,19 +450,18 @@ class ReciboWidget extends StatelessWidget {
               3: const FlexColumnWidth(2),
             },
       children: [
-        // Header
+        // Header — fondo blanco, texto negro, borde inferior
         TableRow(
-          decoration: const BoxDecoration(color: _navy),
+          decoration: const BoxDecoration(color: Colors.white),
           children: [
-            if (tieneVence)
-              _th('VENCE', fs: fsH),
+            if (tieneVence) _th('VENCE', fs: fsH),
             _th('DESCRIPCIÓN', fs: fsH),
             _th('MONTO', fs: fsH, center: true),
             _th('PUNIT.', fs: fsH, center: true),
             _th('TOTAL', fs: fsH, center: true),
           ],
         ),
-        // Rows
+        // Filas de servicios
         ...recibo.servicios.asMap().entries.map((e) {
           final i = e.key;
           final s = e.value;
@@ -477,28 +474,37 @@ class ReciboWidget extends StatelessWidget {
                 color: i.isEven ? Colors.white : _lightGray),
             children: [
               if (tieneVence)
-                _td(venceStr, fs: fs, center: true,
-                    color: s.fechaVence != null ? _red : _gray),
+                _td(venceStr, fs: fs, center: true),
               _td(s.descripcion, fs: fs),
-              _td(fmt.format(s.monto), fs: fs, center: true),
-              _td(s.punitorios > 0 ? fmt.format(s.punitorios) : '—',
-                  fs: fs, center: true,
-                  color: s.punitorios > 0 ? _red : _gray),
-              _td(fmt.format(s.total), fs: fs, center: true, bold: true),
+              _td(fmt(s.monto), fs: fs, center: true),
+              _td(!recibo.esNeutro && s.punitorios > 0 ? fmt(s.punitorios) : (recibo.esNeutro ? '____________' : '—'),
+                  fs: fs, center: true),
+              _td(fmt(s.total), fs: fs, center: true, bold: true),
             ],
           );
         }),
+        // Fila total
+        TableRow(
+          decoration: const BoxDecoration(color: Color(0xFFEEEEEE)),
+          children: [
+            if (tieneVence) _td('', fs: fs),
+            _td('TOTAL', fs: fsH, bold: true),
+            _td('', fs: fs),
+            _td('', fs: fs),
+            _td(fmt(totalGeneral), fs: fsH, center: true, bold: true),
+          ],
+        ),
       ],
     );
   }
 
   Widget _th(String t, {double fs = 9, bool center = false}) => Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 5),
         child: Text(t,
             style: TextStyle(
                 fontSize: fs,
                 fontWeight: FontWeight.bold,
-                color: Colors.white),
+                color: _dark),
             textAlign: center ? TextAlign.center : TextAlign.left),
       );
 
@@ -517,7 +523,8 @@ class ReciboWidget extends StatelessWidget {
             textAlign: center ? TextAlign.center : TextAlign.left),
       );
 
-  Widget _resumenPago(NumberFormat fmt, {bool small = false}) {
+  Widget _resumenPago(NumberFormat fmtRaw, {bool small = false}) {
+    String fmt(double v) => recibo.esNeutro ? '____________' : fmtRaw.format(v);
     final fs = small ? 10.0 : 12.0;
     return Align(
       alignment: Alignment.centerRight,
@@ -525,13 +532,13 @@ class ReciboWidget extends StatelessWidget {
         width: 280,
         child: Column(
           children: [
-            _filaResumen('Monto a Abonar:', fmt.format(recibo.montoTotal),
-                _blue, fs: fs),
-            _filaResumen('TOTAL ABONADO:', fmt.format(recibo.montoAbonado),
-                _green, fs: fs),
+            _filaResumen('Monto a Abonar:', fmt(recibo.montoTotal),
+                _dark, fs: fs),
+            _filaResumen('TOTAL ABONADO:', fmt(recibo.montoAbonado),
+                _dark, fs: fs),
             _filaResumen('Saldo:',
-                fmt.format(recibo.saldo),
-                recibo.saldo > 0 ? _red : _green,
+                fmt(recibo.saldo),
+                _dark,
                 fs: fs, bold: true),
           ],
         ),

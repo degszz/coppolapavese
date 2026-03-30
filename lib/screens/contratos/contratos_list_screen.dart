@@ -1,4 +1,5 @@
 // lib/screens/contratos/contratos_list_screen.dart
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../database/database_helper.dart';
 import 'contrato_form_screen.dart';
@@ -17,6 +18,7 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
   List<Map<String, dynamic>> _contratosFiltrados = [];
   bool _cargando = true;
   final _busquedaCtrl = TextEditingController();
+  Timer? _autoRefresh;
 
   static const _magenta = Color(0xFFC2185B);
   static const _navy = Color(0xFF1A3A5C);
@@ -26,18 +28,42 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
     super.initState();
     _busquedaCtrl.addListener(_buscar);
     _cargar();
+    _autoRefresh = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => _refrescoSilencioso(),
+    );
   }
 
   @override
   void dispose() {
+    _autoRefresh?.cancel();
     _busquedaCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _refrescoSilencioso() async {
+    try {
+      final data = await _db.obtenerContratosActivos();
+      if (mounted) {
+        setState(() => _contratos = data);
+        _buscar();
+      }
+    } catch (_) {}
   }
 
   Future<void> _cargar() async {
     setState(() => _cargando = true);
     try {
-      final data = await _db.obtenerContratosActivos();
+      final raw = await _db.obtenerContratosActivos();
+      // Convertir a mapas mutables y cargar garantes
+      final data = raw.map((c) => Map<String, dynamic>.from(c)).toList();
+      for (final c in data) {
+        final cId = c['id'] as int?;
+        if (cId != null) {
+          final garantes = await _db.obtenerGarantesPorContrato(cId);
+          c['_garantes'] = garantes;
+        }
+      }
       if (mounted) {
         setState(() {
           _contratos = data;
@@ -247,6 +273,7 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
     final fechaInicio = c['fecha_inicio'] as String? ?? '';
     final fechaFin = c['fecha_fin'] as String? ?? '';
     final rescindido = (c['rescindido'] as int? ?? 0) == 1;
+    final garantes = (c['_garantes'] as List<Map<String, dynamic>>?) ?? [];
 
     return Card(
       elevation: 2,
@@ -297,6 +324,12 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                       style: const TextStyle(
                           fontSize: 11, color: Color(0xFF757575)),
                     ),
+                    if (garantes.isNotEmpty)
+                      Text(
+                        'GARANTE${garantes.length > 1 ? 'S' : ''}: ${garantes.map((g) => g['nombre'] as String? ?? '').join(', ')}',
+                        style: const TextStyle(
+                            fontSize: 11, color: Color(0xFF4E342E)),
+                      ),
                     const SizedBox(height: 6),
                     // Chips row
                     Wrap(
