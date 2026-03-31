@@ -1,7 +1,4 @@
-import 'dart:io';
 import 'package:sqflite/sqflite.dart';
-import 'package:path/path.dart';
-import 'package:path_provider/path_provider.dart';
 import 'db_config.dart';
 
 class DatabaseHelper {
@@ -933,14 +930,16 @@ class DatabaseHelper {
         r.*,
         p.nombre   AS propietario_nombre,
         i.nombre   AS inquilino_nombre,
-        d.direccion,
-        d.localidad,
+        COALESCE(pr.direccion, d.direccion, '') AS direccion,
+        COALESCE(pr.localidad, d.localidad, '') AS localidad,
         GROUP_CONCAT(s.descripcion, ' | ') AS servicios_descripcion
       FROM recibos r
-      LEFT JOIN propietarios   p ON r.propietario_id = p.id
-      LEFT JOIN inquilinos     i ON r.inquilino_id   = i.id
-      LEFT JOIN domicilios     d ON r.domicilio_id   = d.id
-      LEFT JOIN servicios_recibo s ON s.recibo_id    = r.id
+      LEFT JOIN propietarios     p  ON r.propietario_id = p.id
+      LEFT JOIN inquilinos       i  ON r.inquilino_id   = i.id
+      LEFT JOIN domicilios       d  ON r.domicilio_id   = d.id
+      LEFT JOIN contratos        c  ON c.id = r.contrato_id
+      LEFT JOIN propiedades      pr ON pr.id = c.propiedad_id
+      LEFT JOIN servicios_recibo s  ON s.recibo_id      = r.id
       $where
       GROUP BY r.id
       ORDER BY r.fecha_emision DESC
