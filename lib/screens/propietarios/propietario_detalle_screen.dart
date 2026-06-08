@@ -4,6 +4,8 @@ import 'package:intl/intl.dart';
 import '../../database/database_helper.dart';
 import '../../models/recibo_model.dart';
 import '../../models/servicio_item_model.dart';
+import '../../utils/snackbar_helper.dart';
+import '../../utils/whatsapp_launcher.dart';
 import '../recibos/recibo_form_screen.dart';
 import '../recibos/recibo_preview_screen.dart';
 
@@ -25,12 +27,12 @@ class PropietarioDetalleScreen extends StatefulWidget {
 class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
   final _db = DatabaseHelper();
   Map<String, dynamic>? _propietario;
+  List<Map<String, dynamic>> _contratos = [];
   List<Map<String, dynamic>> _recibos = [];
   bool _cargando = true;
+  int? _contratoSeleccionadoId;
 
-  double _totalMonto = 0;
-  double _totalCobrado = 0;
-  double _totalPendiente = 0;
+  List<Map<String, dynamic>> _periodosContrato = [];
 
   @override
   void initState() {
@@ -43,39 +45,74 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
     try {
       final propietario =
           await _db.obtenerPropietarioPorId(widget.propietarioId);
-      final recibos =
-          await _db.obtenerRecibosConExtras(widget.propietarioId);
+      final contratos =
+          await _db.obtenerContratosPorPropietario(widget.propietarioId);
 
-      double totalMonto = 0;
-      double totalCobrado = 0;
-      double totalPendiente = 0;
+      // Si hay contratos y no hay selección, seleccionar el primero
+      int? contratoSel = _contratoSeleccionadoId;
+      if (contratos.isNotEmpty) {
+        final ids = contratos.map((c) => c['id'] as int).toSet();
+        if (contratoSel == null || !ids.contains(contratoSel)) {
+          contratoSel = contratos.first['id'] as int;
+        }
+      } else {
+        contratoSel = null;
+      }
 
-      for (final r in recibos) {
-        totalMonto += (r['monto_total'] as num?)?.toDouble() ?? 0;
-        totalCobrado += (r['monto_abonado'] as num?)?.toDouble() ?? 0;
-        totalPendiente += (r['saldo'] as num?)?.toDouble() ?? 0;
+      // Cargar periodos del contrato seleccionado
+      List<Map<String, dynamic>> periodos = [];
+      if (contratoSel != null) {
+        periodos = await _db.obtenerPeriodosPorContrato(contratoSel);
+      }
+
+      // Cargar recibos del contrato seleccionado (o todos si no hay contrato)
+      List<Map<String, dynamic>> recibos;
+      if (contratoSel != null) {
+        recibos = await _db.obtenerRecibosPorContrato(contratoSel);
+      } else {
+        recibos = await _db.obtenerRecibosConExtras(widget.propietarioId);
       }
 
       setState(() {
         _propietario = propietario;
+        _contratos = contratos;
+        _contratoSeleccionadoId = contratoSel;
+        _periodosContrato = periodos;
         _recibos = recibos;
-        _totalMonto = totalMonto;
-        _totalCobrado = totalCobrado;
-        _totalPendiente = totalPendiente;
         _cargando = false;
       });
     } catch (e) {
       setState(() => _cargando = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al cargar datos: $e')),
-        );
+        mostrarNotificacion(context,
+            texto: 'Error al cargar datos: $e',
+            color: const Color(0xFFC62828));
       }
     }
   }
 
+  Future<void> _seleccionarContrato(int contratoId) async {
+    setState(() => _contratoSeleccionadoId = contratoId);
+    final recibos = await _db.obtenerRecibosPorContrato(contratoId);
+    final periodos = await _db.obtenerPeriodosPorContrato(contratoId);
+    setState(() {
+      _recibos = recibos;
+      _periodosContrato = periodos;
+    });
+  }
+
+  Map<String, dynamic>? get _contratoActual {
+    if (_contratoSeleccionadoId == null) return null;
+    try {
+      return _contratos
+          .firstWhere((c) => c['id'] == _contratoSeleccionadoId);
+    } catch (_) {
+      return null;
+    }
+  }
+
   // ════════════════════════════════════════════════════════════════
-  // BUILD PRINCIPAL — layout de escritorio en dos columnas
+  // BUILD PRINCIPAL
   // ════════════════════════════════════════════════════════════════
 
   @override
@@ -104,22 +141,12 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
           : Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // ─── COLUMNA IZQUIERDA: info + financiero + acciones ──
                 SizedBox(
-                  width: 320,
+                  width: 340,
                   child: _columnaIzquierda(),
                 ),
-
-                // ─── DIVISOR VERTICAL ─────────────────────────────────
-                Container(
-                  width: 1,
-                  color: const Color(0xFFE0E0E0),
-                ),
-
-                // ─── COLUMNA DERECHA: historial de recibos ────────────
-                Expanded(
-                  child: _columnaDerecha(),
-                ),
+                Container(width: 1, color: const Color(0xFFE0E0E0)),
+                Expanded(child: _columnaDerecha()),
               ],
             ),
     );
@@ -139,28 +166,20 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
           children: [
             _tarjetaPropietario(),
             const SizedBox(height: 16),
-            _panelFinanciero(),
-            const SizedBox(height: 20),
-            _botonNuevoRecibo(),
-            const SizedBox(height: 12),
-            _botonVerTodos(),
+            // ── Selector de contratos por propiedad ──
+            if (_contratos.isNotEmpty) ...[
+              _selectorContratos(),
+              const SizedBox(height: 16),
+              _infoContratoSeleccionado(),
+            ],
           ],
         ),
       ),
     );
   }
 
-  // ── Tarjeta de propietario con gradiente ───────────────────────
+  // ── Tarjeta de propietario ─────────────────────────────────────
   Widget _tarjetaPropietario() {
-    final inquilino = _recibos.isNotEmpty
-        ? _recibos.first['inquilino_nombre'] as String? ?? 'Sin inquilino'
-        : 'Sin inquilino';
-    final direccion = _recibos.isNotEmpty
-        ? _recibos.first['direccion'] as String? ?? ''
-        : '';
-    final localidad = _recibos.isNotEmpty
-        ? _recibos.first['localidad'] as String? ?? ''
-        : '';
     final telefono = _propietario?['telefono'] as String? ?? '';
     final email = _propietario?['email'] as String? ?? '';
 
@@ -177,7 +196,6 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Avatar + nombre
           Row(
             children: [
               CircleAvatar(
@@ -208,12 +226,12 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),
-                    const Text(
-                      'PROPIETARIO',
-                      style: TextStyle(
+                    Text(
+                      '${_contratos.length} contrato${_contratos.length == 1 ? '' : 's'}',
+                      style: const TextStyle(
                         color: Colors.white60,
-                        fontSize: 10,
-                        letterSpacing: 1.5,
+                        fontSize: 11,
+                        letterSpacing: 1,
                       ),
                     ),
                   ],
@@ -221,17 +239,14 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          const Divider(color: Colors.white24, height: 1),
-          const SizedBox(height: 14),
-          if (telefono.isNotEmpty) _filaInfoTarjeta(Icons.phone, telefono),
-          if (email.isNotEmpty) _filaInfoTarjeta(Icons.email_outlined, email),
-          _filaInfoTarjeta(Icons.person_outline, 'Inq: $inquilino'),
-          if (direccion.isNotEmpty)
-            _filaInfoTarjeta(
-              Icons.location_on_outlined,
-              localidad.isNotEmpty ? '$direccion, $localidad' : direccion,
-            ),
+          if (telefono.isNotEmpty || email.isNotEmpty) ...[
+            const SizedBox(height: 14),
+            const Divider(color: Colors.white24, height: 1),
+            const SizedBox(height: 12),
+            if (telefono.isNotEmpty) _filaInfoTarjeta(Icons.phone, telefono),
+            if (email.isNotEmpty)
+              _filaInfoTarjeta(Icons.email_outlined, email),
+          ],
         ],
       ),
     );
@@ -256,95 +271,232 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
     );
   }
 
-  // ── Panel financiero (3 celdas verticales) ─────────────────────
-  Widget _panelFinanciero() {
+  // ── Selector de contratos (chips por propiedad) ────────────────
+  Widget _selectorContratos() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Row(
+          children: [
+            Icon(Icons.home_outlined, size: 16, color: Color(0xFFC2185B)),
+            SizedBox(width: 6),
+            Text(
+              'Propiedades / Contratos',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF424242),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        ...List.generate(_contratos.length, (i) {
+          final c = _contratos[i];
+          final id = c['id'] as int;
+          final dir = c['propiedad_direccion'] as String? ?? 'Sin propiedad';
+          final loc = c['propiedad_localidad'] as String? ?? '';
+          final inqNombre = c['inquilino_nombre'] as String? ?? '';
+          final inqApellido = c['inquilino_apellido'] as String? ?? '';
+          final inquilino = inqApellido.isNotEmpty
+              ? '$inqNombre $inqApellido'
+              : inqNombre.isNotEmpty
+                  ? inqNombre
+                  : 'Sin inquilino';
+          final label = loc.isNotEmpty ? '$dir, $loc' : dir;
+          final selected = _contratoSeleccionadoId == id;
+          final rescindido = (c['rescindido'] as int? ?? 0) == 1;
+
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: InkWell(
+              onTap: () => _seleccionarContrato(id),
+              borderRadius: BorderRadius.circular(10),
+              child: Container(
+                width: double.infinity,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                decoration: BoxDecoration(
+                  color: selected
+                      ? const Color(0xFFC2185B).withOpacity(0.1)
+                      : const Color(0xFFF5F5F5),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: selected
+                        ? const Color(0xFFC2185B)
+                        : const Color(0xFFE0E0E0),
+                    width: selected ? 1.5 : 1,
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.home,
+                      size: 16,
+                      color: selected
+                          ? const Color(0xFFC2185B)
+                          : const Color(0xFF9E9E9E),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            label,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: selected
+                                  ? const Color(0xFFC2185B)
+                                  : const Color(0xFF424242),
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          Text(
+                            'Inq: $inquilino',
+                            style: const TextStyle(
+                              fontSize: 10,
+                              color: Color(0xFF757575),
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (rescindido)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFC62828).withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Text(
+                          'RESCINDIDO',
+                          style: TextStyle(
+                            fontSize: 8,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFFC62828),
+                          ),
+                        ),
+                      ),
+                    if (selected)
+                      const Icon(Icons.check_circle,
+                          size: 16, color: Color(0xFFC2185B)),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  // ── Info del contrato seleccionado ─────────────────────────────
+  Widget _infoContratoSeleccionado() {
+    final c = _contratoActual;
+    if (c == null) return const SizedBox.shrink();
+
+    final fechaInicio = c['fecha_inicio'] as String? ?? '';
+    final fechaFin = c['fecha_fin'] as String? ?? '';
+    final cuotas = c['cuotas_total'] as int? ?? 0;
     final fmt = NumberFormat.currency(
-        locale: 'es_AR', symbol: '\$', decimalDigits: 0);
+        locale: 'es_AR', symbol: '\$', decimalDigits: 0, customPattern: '\u00A4#,##0');
+
+    // Mostrar último periodo asignado (o primer periodo si no hay periodos)
+    double alquiler;
+    String alquilerLabel;
+    if (_periodosContrato.isNotEmpty) {
+      final ultimo = _periodosContrato.last;
+      alquiler = (ultimo['monto'] as num?)?.toDouble() ?? 0.0;
+      final desde = ultimo['cuota_desde'] as int? ?? 0;
+      final hasta = ultimo['cuota_hasta'] as int? ?? 0;
+      alquilerLabel = 'Alquiler (cuota #$desde-#$hasta)';
+    } else {
+      alquiler = (c['alquiler_primer_periodo'] as num?)?.toDouble() ?? 0.0;
+      alquilerLabel = 'Alquiler 1° per.';
+    }
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        color: const Color(0xFFF5F5F5),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: const Color(0xFFE0E0E0)),
       ),
+      padding: const EdgeInsets.all(12),
       child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _celdaFinanciero(
-            label: 'Total Facturado',
-            valor: fmt.format(_totalMonto),
-            icono: Icons.receipt_long,
-            color: const Color(0xFF1565C0),
-            primero: true,
+          const Row(
+            children: [
+              Icon(Icons.description_outlined,
+                  size: 14, color: Color(0xFF1565C0)),
+              SizedBox(width: 6),
+              Text(
+                'Datos del Contrato',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: Color(0xFF1565C0),
+                ),
+              ),
+            ],
           ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
-          _celdaFinanciero(
-            label: 'Total Cobrado',
-            valor: fmt.format(_totalCobrado),
-            icono: Icons.check_circle_outline,
-            color: const Color(0xFF2E7D32),
-          ),
-          const Divider(height: 1, indent: 16, endIndent: 16),
-          _celdaFinanciero(
-            label: 'Saldo Pendiente',
-            valor: fmt.format(_totalPendiente),
-            icono: Icons.pending_outlined,
-            color: _totalPendiente > 0
-                ? const Color(0xFFC62828)
-                : const Color(0xFF2E7D32),
-            ultimo: true,
+          const SizedBox(height: 8),
+          if (fechaInicio.isNotEmpty)
+            _filaInfoContrato('Inicio', _formatearFecha(fechaInicio)),
+          if (fechaFin.isNotEmpty)
+            _filaInfoContrato('Fin', _formatearFecha(fechaFin)),
+          if (cuotas > 0) _filaInfoContrato('Cuotas', '$cuotas'),
+          if (alquiler > 0)
+            _filaInfoContrato(alquilerLabel, fmt.format(alquiler)),
+          _filaInfoContrato('Recibos', '${_recibos.length}'),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: _nuevoRecibo,
+              icon: const Icon(Icons.add, size: 16),
+              label: const Text('Nuevo Recibo'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFC2185B),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                textStyle: const TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.bold),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
           ),
         ],
       ),
     );
   }
 
-  Widget _celdaFinanciero({
-    required String label,
-    required String valor,
-    required IconData icono,
-    required Color color,
-    bool primero = false,
-    bool ultimo = false,
-  }) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.vertical(
-          top: primero ? const Radius.circular(12) : Radius.zero,
-          bottom: ultimo ? const Radius.circular(12) : Radius.zero,
-        ),
-      ),
+  Widget _filaInfoContrato(String label, String valor) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(8),
+          SizedBox(
+            width: 100,
+            child: Text(
+              label,
+              style: const TextStyle(
+                  fontSize: 11, color: Color(0xFF757575)),
             ),
-            child: Icon(icono, size: 18, color: color),
           ),
-          const SizedBox(width: 12),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  label,
-                  style: const TextStyle(
-                      fontSize: 11, color: Color(0xFF9E9E9E)),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  valor,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                    color: color,
-                  ),
-                ),
-              ],
+            child: Text(
+              valor,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF424242),
+              ),
             ),
           ),
         ],
@@ -395,10 +547,15 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
   // ════════════════════════════════════════════════════════════════
 
   Widget _columnaDerecha() {
+    final c = _contratoActual;
+    final dir = c != null
+        ? (c['propiedad_direccion'] as String? ?? '')
+        : '';
+    final tituloExtra = dir.isNotEmpty ? ' — $dir' : '';
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // ── Encabezado de la columna derecha ──────────────────────
         Container(
           padding: const EdgeInsets.fromLTRB(24, 20, 24, 16),
           color: Colors.white,
@@ -407,12 +564,15 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
               const Icon(Icons.receipt_long,
                   size: 20, color: Color(0xFFC2185B)),
               const SizedBox(width: 10),
-              Text(
-                'Historial de Recibos',
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF212121),
+              Expanded(
+                child: Text(
+                  'Historial de Recibos$tituloExtra',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFF212121),
+                  ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
               const SizedBox(width: 8),
@@ -436,8 +596,6 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
           ),
         ),
         const Divider(height: 1),
-
-        // ── Lista de recibos ───────────────────────────────────────
         Expanded(
           child: _recibos.isEmpty
               ? _sinRecibos()
@@ -451,7 +609,7 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
     );
   }
 
-  // ── Tarjeta individual de recibo (layout horizontal) ──────────
+  // ── Tarjeta individual de recibo ─────────────────────────────
   Widget _tarjetaRecibo(Map<String, dynamic> r) {
     final numeroRecibo = r['numero_recibo'] as int? ?? 0;
     final fechaEmision = _formatearFecha(r['fecha_emision'] as String? ?? '');
@@ -463,19 +621,17 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
     final estado = r['estado'] as String? ?? 'pendiente';
     final reciboId = r['id'] as int;
 
-    // Extras del contrato
     final notasRecibo = r['notas_recibo'] as String?;
     final tieneNotas = notasRecibo != null && notasRecibo.trim().isNotEmpty;
     final alertarInquilino = (r['alertar_inquilino'] as int? ?? 0) == 1;
     final alertarPropietario = (r['alertar_propietario'] as int? ?? 0) == 1;
     final tieneAlertas = alertarInquilino || alertarPropietario;
-    final cantidadConceptos = r['cantidad_conceptos'] as int? ?? 0;
 
     final colorEstado = _colorEstado(estado);
     final labelEstado = _labelEstado(estado);
 
     final fmt = NumberFormat.currency(
-        locale: 'es_AR', symbol: '\$', decimalDigits: 0);
+        locale: 'es_AR', symbol: '\$', decimalDigits: 0, customPattern: '\u00A4#,##0');
 
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
@@ -484,11 +640,14 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
         borderRadius: BorderRadius.circular(10),
         side: const BorderSide(color: Color(0xFFE0E0E0)),
       ),
-      child: Padding(
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        onTap: () => _verRecibo(reciboId),
+        child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
         child: Row(
           children: [
-            // ── Número de recibo (columna izquierda) ──────────────
+            // ── Número de recibo ──
             Column(
               children: [
                 Container(
@@ -517,23 +676,28 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
                     ],
                   ),
                 ),
-                const SizedBox(height: 6),
-                // Badge estado
+                const SizedBox(height: 4),
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 6, vertical: 3),
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
-                    color: colorEstado.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(10),
-                    border:
-                        Border.all(color: colorEstado.withOpacity(0.4)),
+                    color: estado == 'pagado'
+                        ? const Color(0xFFC2185B)
+                        : Colors.white,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: estado == 'pagado'
+                          ? const Color(0xFFC2185B)
+                          : const Color(0xFFBDBDBD),
+                    ),
                   ),
                   child: Text(
-                    labelEstado,
+                    estado == 'pagado' ? 'PAGÓ' : 'NO PAGÓ',
                     style: TextStyle(
-                      fontSize: 10,
+                      fontSize: 7,
                       fontWeight: FontWeight.bold,
-                      color: colorEstado,
+                      color: estado == 'pagado'
+                          ? Colors.white
+                          : const Color(0xFF424242),
                     ),
                   ),
                 ),
@@ -541,7 +705,7 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
             ),
             const SizedBox(width: 16),
 
-            // ── Fechas ────────────────────────────────────────────
+            // ── Fechas ──
             Expanded(
               flex: 2,
               child: Column(
@@ -550,14 +714,13 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
                   _fechaFila(Icons.send, 'Emisión', fechaEmision),
                   const SizedBox(height: 4),
                   _fechaFila(Icons.event, 'Vence', fechaVencimiento),
-                  if (tieneNotas || tieneAlertas || cantidadConceptos > 0) ...[
+                  if (tieneNotas || tieneAlertas) ...[
                     const SizedBox(height: 8),
                     _badgesExtras(
                       tieneNotas: tieneNotas,
                       tieneAlertas: tieneAlertas,
                       alertarInquilino: alertarInquilino,
                       alertarPropietario: alertarPropietario,
-                      cantidadConceptos: cantidadConceptos,
                       notasRecibo: notasRecibo,
                     ),
                   ],
@@ -566,7 +729,7 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
             ),
             const SizedBox(width: 16),
 
-            // ── Montos (3 columnas) ───────────────────────────────
+            // ── Montos ──
             _celdaMonto('Total', fmt.format(montoTotal),
                 const Color(0xFF1565C0)),
             const SizedBox(width: 12),
@@ -582,7 +745,7 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
             ),
             const SizedBox(width: 20),
 
-            // ── Botón Ver Recibo ──────────────────────────────────
+            // ── Botones ──
             ElevatedButton.icon(
               onPressed: () => _verRecibo(reciboId),
               icon: const Icon(Icons.visibility_outlined, size: 15),
@@ -593,38 +756,36 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
                 textStyle: const TextStyle(fontSize: 12),
               ),
             ),
-            const SizedBox(width: 8),
-
-            // ── Botón Estado ──────────────────────────────────────
-            OutlinedButton.icon(
-              onPressed: () => _cambiarEstadoRecibo(r),
-              icon: Icon(
-                estado == 'pagado'
-                    ? Icons.hourglass_empty
-                    : Icons.check_circle_outline,
-                size: 14,
-              ),
-              label: Text(
-                estado == 'pagado' ? 'Pendiente' : 'Pagado',
-                style: const TextStyle(fontSize: 11),
-              ),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: estado == 'pagado'
-                    ? const Color(0xFFE65100)
-                    : const Color(0xFF2E7D32),
-                side: BorderSide(
+            const SizedBox(width: 10),
+            // Estado: texto clickeable
+            GestureDetector(
+              onTap: () => _cambiarEstadoRecibo(r),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                decoration: BoxDecoration(
+                  color: estado == 'pagado'
+                      ? const Color(0xFFC2185B)
+                      : Colors.white,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
                     color: estado == 'pagado'
-                        ? const Color(0xFFE65100)
-                        : const Color(0xFF2E7D32)),
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 8),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ? const Color(0xFFC2185B)
+                        : const Color(0xFFBDBDBD),
+                  ),
+                ),
+                child: Text(
+                  estado == 'pagado' ? 'PAGÓ' : 'NO PAGÓ',
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: estado == 'pagado'
+                        ? Colors.white
+                        : const Color(0xFF424242),
+                  ),
+                ),
               ),
             ),
             const SizedBox(width: 6),
-
-            // ── Botón WhatsApp ────────────────────────────────────
             IconButton(
               onPressed: () => _enviarMensajeWA(r),
               icon: const Icon(Icons.message_outlined, size: 18),
@@ -638,8 +799,6 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
               ),
             ),
             const SizedBox(width: 2),
-
-            // ── Botón Eliminar ────────────────────────────────────
             IconButton(
               onPressed: () =>
                   _confirmarEliminarRecibo(reciboId, numeroRecibo),
@@ -655,6 +814,7 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -708,13 +868,11 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
     );
   }
 
-  // ── Badges de extras (notas / alertas / conceptos) ────────────
   Widget _badgesExtras({
     required bool tieneNotas,
     required bool tieneAlertas,
     required bool alertarInquilino,
     required bool alertarPropietario,
-    required int cantidadConceptos,
     required String? notasRecibo,
   }) {
     return Wrap(
@@ -742,17 +900,6 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
               label: _labelAlertas(alertarInquilino, alertarPropietario),
               color: const Color(0xFF1565C0),
               fondo: const Color(0xFFE3F2FD),
-            ),
-          ),
-        if (cantidadConceptos > 0)
-          Tooltip(
-            message: '$cantidadConceptos concepto${cantidadConceptos == 1 ? '' : 's'} extra${cantidadConceptos == 1 ? '' : 's'}',
-            child: _chip(
-              icono: Icons.playlist_add_check,
-              label:
-                  '$cantidadConceptos extra${cantidadConceptos == 1 ? '' : 's'}',
-              color: const Color(0xFF2E7D32),
-              fondo: const Color(0xFFE8F5E9),
             ),
           ),
       ],
@@ -793,7 +940,6 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
     return 'Propietario';
   }
 
-  // ── Sin recibos ───────────────────────────────────────────────
   Widget _sinRecibos() {
     return Center(
       child: Column(
@@ -803,7 +949,7 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
               size: 64, color: Colors.grey.withOpacity(0.3)),
           const SizedBox(height: 16),
           const Text(
-            'Sin recibos registrados',
+            'Sin recibos para este contrato',
             style: TextStyle(
                 fontSize: 16, color: Color(0xFF9E9E9E)),
           ),
@@ -828,6 +974,7 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
       MaterialPageRoute(
         builder: (_) => ReciboFormScreen(
           propietarioIdInicial: widget.propietarioId,
+          contratoIdInicial: _contratoSeleccionadoId,
         ),
       ),
     );
@@ -895,7 +1042,7 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
         (r['numero_recibo'] as int? ?? 0).toString().padLeft(4, '0');
     final montoTotal = (r['monto_total'] as num?)?.toDouble() ?? 0.0;
     final fmt = NumberFormat.currency(
-        locale: 'es_AR', symbol: '\$', decimalDigits: 0);
+        locale: 'es_AR', symbol: '\$', decimalDigits: 0, customPattern: '\u00A4#,##0');
 
     final result = await showDialog<String>(
       context: context,
@@ -962,51 +1109,52 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
   void _enviarMensajeWA(Map<String, dynamic> r) =>
       _abrirWhatsApp(r, esPago: false);
 
-  void _abrirWhatsApp(Map<String, dynamic> r, {required bool esPago}) {
-    final rawTel =
-        (_propietario?['telefono'] as String? ?? '').trim();
+  Future<void> _abrirWhatsApp(Map<String, dynamic> r, {required bool esPago}) async {
+    // Usar teléfono del inquilino (celular o telefono)
+    final celular = (r['inquilino_celular'] as String? ?? '').trim();
+    final telefono = (r['inquilino_telefono'] as String? ?? '').trim();
+    final rawTel = celular.isNotEmpty ? celular : telefono;
+
     if (rawTel.isEmpty) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content:
-                Text('El propietario no tiene teléfono registrado.')));
+        mostrarNotificacion(context,
+            texto: 'El inquilino no tiene teléfono registrado.',
+            color: const Color(0xFFF57C00));
       }
       return;
     }
 
-    String tel = rawTel.replaceAll(RegExp(r'[\s\-\(\)]'), '');
-    if (tel.startsWith('0')) {
-      tel = '+54${tel.substring(1)}';
-    } else if (!tel.startsWith('+')) {
-      tel = '+54$tel';
-    }
+    final tel = normalizarTelefonoAR(rawTel);
 
-    final nombre = _propietario?['nombre'] as String? ??
-        widget.nombrePropietario;
+    final inquilino = r['inquilino_nombre'] as String? ?? 'Inquilino';
     final numero =
         (r['numero_recibo'] as int? ?? 0).toString().padLeft(4, '0');
     final monto = (r['monto_total'] as num?)?.toDouble() ?? 0.0;
     final dir = r['direccion'] as String? ?? '';
     final fmt = NumberFormat.currency(
-        locale: 'es_AR', symbol: '\$', decimalDigits: 0);
+        locale: 'es_AR', symbol: '\$', decimalDigits: 0, customPattern: '\u00A4#,##0');
     final dirPart =
         dir.isNotEmpty ? 'correspondiente a *$dir* ' : '';
 
     final String mensaje = esPago
-        ? 'Hola $nombre!\n'
+        ? 'Hola $inquilino!\n'
             'Le informamos que el recibo N° $numero por *${fmt.format(monto)}* '
             '${dirPart}ha sido registrado como *PAGADO*.\n'
             '¡Muchas gracias por su pago!\n'
             '_Coppola Pavese Inmobiliaria_'
-        : 'Hola $nombre!\n'
+        : 'Hola $inquilino!\n'
             'Le recordamos que el recibo N° $numero por *${fmt.format(monto)}* '
             '${dirPart}se encuentra *pendiente de pago*.\n'
             'Por favor, realice el pago a la brevedad.\n'
             '_Coppola Pavese Inmobiliaria_';
 
-    final url =
-        'https://wa.me/$tel?text=${Uri.encodeComponent(mensaje)}';
-    Process.run('cmd', ['/c', 'start', '', url]);
+    await abrirWhatsApp(telefono: tel, mensaje: mensaje);
+    if (!mounted) return;
+    await mostrarConfirmacionWhatsApp(
+      context: context,
+      nombreCompleto: inquilino,
+      telefono: tel,
+    );
   }
 
   // ════════════════════════════════════════════════════════════════

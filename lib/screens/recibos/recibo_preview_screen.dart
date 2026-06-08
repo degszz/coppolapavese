@@ -7,6 +7,9 @@ import 'package:path_provider/path_provider.dart';
 import '../../models/recibo_model.dart';
 import '../../widgets/recibo_widget.dart';
 import '../../utils/pdf_generator.dart';
+import '../../utils/snackbar_helper.dart';
+import '../../utils/whatsapp_launcher.dart';
+import '../../widgets/print_queue_dialog.dart';
 
 class ReciboPreviewScreen extends StatefulWidget {
   final ReciboModel recibo;
@@ -43,8 +46,8 @@ class _ReciboPreviewScreenState extends State<ReciboPreviewScreen> {
             onPressed: _generandoPdf ? null : _imprimir,
           ),
           IconButton(
-            icon: const Icon(Icons.share_outlined),
-            tooltip: 'Compartir',
+            icon: const Icon(Icons.chat_outlined),
+            tooltip: 'Enviar por WhatsApp',
             onPressed: _generandoPdf ? null : _compartir,
           ),
         ],
@@ -167,8 +170,8 @@ class _ReciboPreviewScreenState extends State<ReciboPreviewScreen> {
             Expanded(
               child: ElevatedButton.icon(
                 onPressed: _generandoPdf ? null : _compartir,
-                icon: const Icon(Icons.share_outlined),
-                label: const Text('Compartir'),
+                icon: const Icon(Icons.chat_outlined),
+                label: const Text('WhatsApp'),
                 style: ElevatedButton.styleFrom(
                   padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
@@ -194,56 +197,113 @@ class _ReciboPreviewScreenState extends State<ReciboPreviewScreen> {
     );
   }
 
+  // ── Nombre de archivo: Recibo_0001_Juan_Perez ─────────────────
+  String _nombrePdf() {
+    final nro = widget.recibo.numeroRecibo.toString().padLeft(4, '0');
+    final raw = (widget.recibo.inquilinoNombre ?? '').trim();
+    if (raw.isEmpty) return 'Recibo_$nro';
+    final sanitizado = raw
+        .replaceAll('á', 'a').replaceAll('é', 'e').replaceAll('í', 'i')
+        .replaceAll('ó', 'o').replaceAll('ú', 'u').replaceAll('ü', 'u')
+        .replaceAll('Á', 'A').replaceAll('É', 'E').replaceAll('Í', 'I')
+        .replaceAll('Ó', 'O').replaceAll('Ú', 'U').replaceAll('Ü', 'U')
+        .replaceAll('ñ', 'n').replaceAll('Ñ', 'N')
+        .replaceAll(RegExp(r'[^\w\s]'), '')
+        .trim()
+        .replaceAll(RegExp(r'\s+'), '_');
+    return 'Recibo_${nro}_$sanitizado';
+  }
+
   // ── Imprimir usando el paquete printing ───────────────────────
   Future<void> _imprimir() async {
     setState(() => _generandoPdf = true);
     try {
       final pdfBytes =
           await PdfGenerator.generarRecibo(widget.recibo);
-      await Printing.layoutPdf(
+      final enviado = await Printing.layoutPdf(
         onLayout: (_) async => Uint8List.fromList(pdfBytes),
-        name:
-            'Recibo_${widget.recibo.numeroRecibo.toString().padLeft(4, '0')}',
+        name: _nombrePdf(),
       );
+      // Si el usuario efectivamente mandó a imprimir, avisar con acción
+      // para abrir la cola y verificar el estado del trabajo.
+      if (enviado && mounted) {
+        mostrarNotificacion(context,
+            texto: 'Trabajo enviado a la impresora',
+            color: const Color(0xFF2E7D32),
+            action: SnackBarAction(
+              label: 'VER COLA',
+              textColor: Colors.white,
+              onPressed: () => showPrintQueueDialog(context),
+            ));
+      }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al generar PDF: $e'),
-            backgroundColor: const Color(0xFFC62828),
-          ),
-        );
+        mostrarNotificacion(context,
+            texto: 'Error al generar PDF: $e',
+            color: const Color(0xFFC62828));
       }
     } finally {
       if (mounted) setState(() => _generandoPdf = false);
     }
   }
 
-  // ── Compartir por WhatsApp / otras apps ───────────────────────
+  // ── Compartir PDF por WhatsApp al inquilino ────────────────────
   Future<void> _compartir() async {
     setState(() => _generandoPdf = true);
     try {
-      final pdfBytes =
-          await PdfGenerator.generarRecibo(widget.recibo);
+      final pdfBytes = await PdfGenerator.generarRecibo(widget.recibo);
+
+      // Guardar PDF en temp
       final dir = await getTemporaryDirectory();
-      final nombreArchivo =
-          'Recibo_${widget.recibo.numeroRecibo.toString().padLeft(4, '0')}.pdf';
-      final archivo = File('${dir.path}/$nombreArchivo');
+      final nombreArchivo = '${_nombrePdf()}.pdf';
+      final archivo = File('${dir.path}${Platform.pathSeparator}$nombreArchivo');
       await archivo.writeAsBytes(pdfBytes);
 
+      // Texto con datos de la inmobiliaria
+      final nroRecibo = widget.recibo.numeroRecibo.toString().padLeft(4, '0');
+      final inquilino = widget.recibo.inquilinoNombre ?? '';
+      final domicilio = widget.recibo.direccionCompleta;
+
+      final mensaje = StringBuffer();
+      mensaje.writeln('*COPPOLA PAVESE Inmobiliaria*');
+      mensaje.writeln('Blandengues 188 - San Miguel del Monte');
+      mensaje.writeln('Tel: 02226 546317 / 02271 412950');
+      mensaje.writeln('');
+      mensaje.writeln('*Recibo de Alquiler N° $nroRecibo*');
+      if (inquilino.isNotEmpty) mensaje.writeln('Inquilino: $inquilino');
+      if (domicilio.isNotEmpty) mensaje.writeln('Domicilio: $domicilio');
+      mensaje.writeln('');
+      mensaje.writeln('Se adjunta el recibo en formato PDF.');
+
+      // Obtener teléfono del inquilino (celular o telefono)
+      final celular = (widget.recibo.inquilinoCelular ?? '').trim();
+      final telefono = (widget.recibo.inquilinoTelefono ?? '').trim();
+      final rawTel = celular.isNotEmpty ? celular : telefono;
+
+      if (rawTel.isNotEmpty) {
+        // Abrir WhatsApp (Desktop si está instalado, si no Web) al número del
+        // inquilino con el mensaje precargado.
+        final tel = normalizarTelefonoAR(rawTel);
+        await abrirWhatsApp(telefono: tel, mensaje: mensaje.toString());
+        if (mounted) {
+          await mostrarConfirmacionWhatsApp(
+            context: context,
+            nombreCompleto: inquilino,
+            telefono: tel,
+          );
+        }
+      }
+
+      // También compartir PDF via share nativo
       await Share.shareXFiles(
         [XFile(archivo.path)],
-        text:
-            'Recibo de alquiler N° ${widget.recibo.numeroRecibo.toString().padLeft(4, '0')} — Coppola Pavese Inmobiliaria',
+        text: mensaje.toString(),
       );
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al compartir: $e'),
-            backgroundColor: const Color(0xFFC62828),
-          ),
-        );
+        mostrarNotificacion(context,
+            texto: 'Error al compartir: $e',
+            color: const Color(0xFFC62828));
       }
     } finally {
       if (mounted) setState(() => _generandoPdf = false);
@@ -257,34 +317,27 @@ class _ReciboPreviewScreenState extends State<ReciboPreviewScreen> {
       final pdfBytes =
           await PdfGenerator.generarRecibo(widget.recibo);
 
-      final nombreArchivo =
-          'Recibo_${widget.recibo.numeroRecibo.toString().padLeft(4, '0')}.pdf';
+      final nombreArchivo = '${_nombrePdf()}.pdf';
 
       final dir = await _obtenerDirectorioGuardado();
       final archivo = File('${dir.path}/$nombreArchivo');
       await archivo.writeAsBytes(pdfBytes);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('PDF guardado en: ${archivo.path}'),
-            backgroundColor: const Color(0xFF2E7D32),
+        mostrarNotificacion(context,
+            texto: 'PDF guardado en: ${archivo.path}',
+            color: const Color(0xFF2E7D32),
             action: SnackBarAction(
               label: 'ABRIR',
               textColor: Colors.white,
               onPressed: () => _abrirArchivo(archivo.path),
-            ),
-          ),
-        );
+            ));
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al guardar: $e'),
-            backgroundColor: const Color(0xFFC62828),
-          ),
-        );
+        mostrarNotificacion(context,
+            texto: 'Error al guardar: $e',
+            color: const Color(0xFFC62828));
       }
     } finally {
       if (mounted) setState(() => _generandoPdf = false);

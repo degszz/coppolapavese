@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../database/database_helper.dart';
+import '../../utils/snackbar_helper.dart';
 
 class PropietarioFormScreen extends StatefulWidget {
   final Map<String, dynamic>? datosExistentes;
@@ -94,24 +95,18 @@ class _PropietarioFormScreenState extends State<PropietarioFormScreen> {
       }
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(_esEdicion
+        mostrarNotificacion(context,
+            texto: _esEdicion
                 ? 'Propietario actualizado correctamente'
-                : 'Propietario registrado correctamente'),
-            backgroundColor: const Color(0xFF2E7D32),
-          ),
-        );
+                : 'Propietario registrado correctamente',
+            color: const Color(0xFF2E7D32));
         Navigator.pop(context, true);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al guardar: $e'),
-            backgroundColor: const Color(0xFFC62828),
-          ),
-        );
+        mostrarNotificacion(context,
+            texto: 'Error al guardar: $e',
+            color: const Color(0xFFC62828));
       }
     } finally {
       if (mounted) setState(() => _guardando = false);
@@ -216,22 +211,16 @@ class _PropietarioFormScreenState extends State<PropietarioFormScreen> {
         final propietarioId = widget.datosExistentes!['id'] as int;
         await _db.eliminarPropietario(propietarioId);
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Propietario eliminado'),
-              backgroundColor: Color(0xFF2E7D32),
-            ),
-          );
+          mostrarNotificacion(context,
+              texto: 'Propietario eliminado',
+              color: const Color(0xFF2E7D32));
           Navigator.pop(context, true);
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error al eliminar: $e'),
-              backgroundColor: const Color(0xFFC62828),
-            ),
-          );
+          mostrarNotificacion(context,
+              texto: 'Error al eliminar: $e',
+              color: const Color(0xFFC62828));
         }
       }
     }
@@ -270,21 +259,15 @@ class _PropietarioFormScreenState extends State<PropietarioFormScreen> {
           _telefonoInquilinoCtrl.clear();
         });
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Inquilino eliminado'),
-              backgroundColor: Color(0xFF2E7D32),
-            ),
-          );
+          mostrarNotificacion(context,
+              texto: 'Inquilino eliminado',
+              color: const Color(0xFF2E7D32));
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error al eliminar: $e'),
-              backgroundColor: const Color(0xFFC62828),
-            ),
-          );
+          mostrarNotificacion(context,
+              texto: 'Error al eliminar: $e',
+              color: const Color(0xFFC62828));
         }
       }
     }

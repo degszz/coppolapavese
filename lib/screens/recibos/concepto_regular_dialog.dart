@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import '../../database/database_helper.dart';
 import '../../models/concepto_regular_model.dart';
+import '../../utils/snackbar_helper.dart';
 
 // Sugerencias de conceptos comunes en alquileres
 const _kConceptosSugeridos = [
@@ -171,10 +172,9 @@ class _ConceptoRegularDialogState extends State<ConceptoRegularDialog> {
       if (mounted) Navigator.pop(context, modelo);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al guardar: $e'),
-              backgroundColor: Colors.red),
-        );
+        mostrarNotificacion(context,
+            texto: 'Error al guardar: $e',
+            color: const Color(0xFFC62828));
       }
     } finally {
       if (mounted) setState(() => _guardando = false);

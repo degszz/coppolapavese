@@ -6,8 +6,10 @@ import '../../database/database_helper.dart';
 import '../../models/recibo_model.dart';
 import '../../models/servicio_item_model.dart';
 import '../../models/concepto_regular_model.dart';
+import '../../utils/snackbar_helper.dart';
+import '../../utils/whatsapp_launcher.dart';
+import 'recibo_blanco_screen.dart';
 import 'recibo_preview_screen.dart';
-import 'concepto_regular_dialog.dart';
 
 class ReciboFormScreen extends StatefulWidget {
   final int? contratoIdInicial;
@@ -32,6 +34,10 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
   final _formKey = GlobalKey<FormState>();
   final _db = DatabaseHelper();
   bool _guardando = false;
+
+  // ── Formato moneda para notas ──────────────────────────────────
+  static final _fmtPesos = NumberFormat.currency(
+      locale: 'es_AR', symbol: '\$', decimalDigits: 0, customPattern: '¤#,##0');
 
   // ── Contratos desde BD ────────────────────────────────────────
   List<Map<String, dynamic>> _contratos = [];
@@ -58,8 +64,6 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
   // ── Servicios dinámicos ───────────────────────────────────────
   final List<_FilaServicio> _servicios = [];
 
-  // ── Conceptos regulares del contrato (Tab 2 — sección superior) ─
-  List<ConceptoRegularModel> _conceptosReg = [];
 
   // ── Estado del formulario "Concepto Único" (Tab 2 — sección inferior) ─
   DateTime? _uniVence;
@@ -106,6 +110,63 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
   bool _alertarProp = true;
   bool _imprimirRecProp = true;
 
+  // ── Helper: genera la nota de período para el pie del recibo ───
+  /// Devuelve un par (descripcion, notaPeriodo) para la cuota [numeroCuota]
+  /// emitida en la fecha [fechaEmision].
+  ///
+  /// La nota incluye:
+  /// - Mes numérico y año (ej. "Alquiler mes 5/2026")
+  /// - Posición dentro del período vigente (ej. "Mes 3 de 6")
+  /// - Meses restantes hasta cambio de período
+  /// - Monto del siguiente período (si existe y la cuota es la última o
+  ///   está cerca del cambio)
+  ({String descripcion, String notaPeriodo}) _generarNotaPeriodo({
+    required int numeroCuota,
+    required DateTime fechaEmision,
+    required List<Map<String, dynamic>> periodosData,
+  }) {
+    final mes = fechaEmision.month.toString().padLeft(2, '0');
+    final anio = fechaEmision.year;
+    final desc = 'Alquiler mes $mes/$anio';
+    final nota = StringBuffer('Alquiler mes $mes/$anio.');
+
+    if (periodosData.isNotEmpty) {
+      // Buscar el período al que pertenece esta cuota
+      Map<String, dynamic>? periodoActual;
+      int periodoIndex = -1;
+      for (int i = 0; i < periodosData.length; i++) {
+        final desde = periodosData[i]['cuota_desde'] as int;
+        final hasta = periodosData[i]['cuota_hasta'] as int;
+        if (numeroCuota >= desde && numeroCuota <= hasta) {
+          periodoActual = periodosData[i];
+          periodoIndex = i;
+          break;
+        }
+      }
+
+      if (periodoActual != null) {
+        final desde = periodoActual['cuota_desde'] as int;
+        final hasta = periodoActual['cuota_hasta'] as int;
+        final totalMesesPeriodo = hasta - desde + 1;
+        final mesActualEnPeriodo = numeroCuota - desde + 1;
+        final restantes = hasta - numeroCuota;
+
+        nota.write(' Mes $mesActualEnPeriodo de $totalMesesPeriodo'
+            ' del período vigente (cuotas $desde–$hasta).');
+
+        if (restantes == 0) {
+          nota.write(' Última cuota de este período.');
+        } else {
+          nota.write(
+              ' Faltan $restantes mes${restantes == 1 ? '' : 'es'}'
+              ' para el cambio de período.');
+        }
+      }
+    }
+
+    return (descripcion: desc, notaPeriodo: nota.toString());
+  }
+
   @override
   void initState() {
     super.initState();
@@ -127,17 +188,34 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
         _fechaVencimiento = widget.fechaVencimientoInicial!;
       }
     });
-    // Auto-select by contratoIdInicial
-    final idBuscar =
-        widget.contratoIdInicial ?? widget.propietarioIdInicial; // fallback
-    if (idBuscar != null && contratos.isNotEmpty) {
-      // Try to find by contrato id first, then by propietario_id
-      final match = contratos.firstWhere(
-        (c) =>
-            c['id'] == idBuscar || c['propietario_id'] == idBuscar,
-        orElse: () => contratos.first,
-      );
-      await _seleccionarContrato(match);
+    // Auto-select: priorizar contratoIdInicial matcheando SOLO contra c['id'].
+    // IMPORTANTE: nunca mezclar contrato_id con propietario_id en el mismo
+    // firstWhere — son IDs de tablas distintas y pueden coincidir
+    // numéricamente, lo que derivaría al contrato equivocado.
+    if (contratos.isNotEmpty) {
+      Map<String, dynamic>? match;
+      if (widget.contratoIdInicial != null) {
+        // Match EXACTO por id de contrato; si no existe (fue borrado,
+        // rescindido, etc.) NO caemos a otro contrato, dejamos sin seleccionar.
+        final idBuscar = widget.contratoIdInicial;
+        try {
+          match = contratos.firstWhere((c) => c['id'] == idBuscar);
+        } catch (_) {
+          match = null;
+        }
+      } else if (widget.propietarioIdInicial != null) {
+        // Caso legacy: si solo se pasó propietarioIdInicial, buscamos
+        // el primer contrato de ese propietario.
+        final propId = widget.propietarioIdInicial;
+        try {
+          match = contratos.firstWhere((c) => c['propietario_id'] == propId);
+        } catch (_) {
+          match = null;
+        }
+      }
+      if (match != null) {
+        await _seleccionarContrato(match);
+      }
     }
   }
 
@@ -145,12 +223,10 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
     final contratoId = c['id'] as int;
     final numeroCuota = await _db.obtenerNumCuotaParaContrato(contratoId);
     final monto = await _db.obtenerMontoPeriodo(contratoId, numeroCuota);
-    // Cargar conceptos regulares del contrato
-    final conceptosData =
-        await _db.obtenerConceptosRegularesPorContrato(contratoId);
-    final conceptos =
-        conceptosData.map((m) => ConceptoRegularModel.fromMap(m)).toList();
     final cuotasTotal = (c['cuotas_total'] as int?) ?? 0;
+
+    // Cargar servicios del último recibo (para pre-cargar conceptos únicos)
+    final serviciosPrev = await _db.obtenerServiciosUltimoRecibo(contratoId);
 
     // Cargar períodos fijos para generar nota de caducidad
     final periodosData = await _db.obtenerPeriodosPorContrato(contratoId);
@@ -164,44 +240,17 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
     final direccion = c['propiedad_direccion'] as String? ?? '';
     final localidad = c['propiedad_localidad'] as String? ?? '';
 
-    // Descripción de alquiler con mes y año legibles
-    final meses = [
-      '', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-      'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
-    ];
+    // Descripción y nota de período con mes numérico
     final now = DateTime.now();
-    final mesLabel = meses[now.month];
-    final desc = 'Alquiler $mesLabel ${now.year}';
-
-    // Nota automática con mes/año y, si hay períodos fijos, info de caducidad
-    String notaPeriodo = 'Alquiler $mesLabel ${now.year}.';
-    if (periodosData.isNotEmpty) {
-      Map<String, dynamic>? periodoActual;
-      for (final p in periodosData) {
-        final desde = p['cuota_desde'] as int;
-        final hasta = p['cuota_hasta'] as int;
-        if (numeroCuota >= desde && numeroCuota <= hasta) {
-          periodoActual = p;
-          break;
-        }
-      }
-      if (periodoActual != null) {
-        final hasta = periodoActual['cuota_hasta'] as int;
-        final restantes = hasta - numeroCuota;
-        if (restantes == 0) {
-          notaPeriodo +=
-              ' Última cuota del período vigente (hasta cuota $hasta).';
-        } else {
-          notaPeriodo +=
-              ' Período vigente: cuotas ${periodoActual['cuota_desde']}-$hasta.'
-              ' Quedan $restantes cuota${restantes == 1 ? '' : 's'} para cambio de período.';
-        }
-      }
-    }
+    final (:descripcion, :notaPeriodo) = _generarNotaPeriodo(
+      numeroCuota: numeroCuota,
+      fechaEmision: now,
+      periodosData: periodosData,
+    );
+    final desc = descripcion;
 
     setState(() {
       _contratoSel = c;
-      _conceptosReg = conceptos;
       _propietarioId = c['propietario_id'] as int?;
       _propietarioNombre = c['propietario_nombre'] as String?;
       _inquilinoId = c['inquilino_id'] as int?;
@@ -212,12 +261,32 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
       _localidadCtrl.text = localidad;
       _notasReciboCtrl.text = notaPeriodo;
 
-      // Auto-populate first service if monto > 0
-      if (monto > 0 && _servicios.isNotEmpty) {
-        _servicios.first.descripcion = desc;
-        _servicios.first.descripcionCtrl.text = desc;
-        _servicios.first.monto = monto;
-        _servicios.first.montoCtrl.text = monto.toStringAsFixed(0);
+      // Limpiar servicios previos
+      for (final s in _servicios) { s.dispose(); }
+      _servicios.clear();
+
+      // Fila principal con monto del período
+      final filaAlquiler = _FilaServicio();
+      if (monto > 0) {
+        filaAlquiler.descripcion = desc;
+        filaAlquiler.descripcionCtrl.text = desc;
+        filaAlquiler.monto = monto;
+        filaAlquiler.montoCtrl.text = monto.toStringAsFixed(0);
+      }
+      _servicios.add(filaAlquiler);
+
+      // Pre-cargar servicios del último recibo (excepto el alquiler principal)
+      for (final sp in serviciosPrev) {
+        final spDesc = sp['descripcion'] as String? ?? '';
+        // Saltar si es el concepto de alquiler principal (ya agregado arriba)
+        if (spDesc.startsWith('Alquiler ')) continue;
+        final fila = _FilaServicio();
+        fila.descripcion = spDesc;
+        fila.descripcionCtrl.text = spDesc;
+        fila.monto = (sp['monto'] as num?)?.toDouble() ?? 0;
+        fila.montoCtrl.text = fila.monto.toStringAsFixed(0);
+        fila.fechaVence = sp['fecha_vence'] as String?;
+        _servicios.add(fila);
       }
 
       // Update recordatorio propietario
@@ -385,35 +454,15 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
     );
   }
 
-  // ── Recibo Neutro (en blanco) ───────────────────────────────
+  // ── Recibo en Blanco (editable) ──────────────────────────────
   void _imprimirReciboNeutro() {
-    final blancoServicios = [
-      ServicioItemModel(descripcion: '___________________________', monto: 0, punitorios: 0, total: 0),
-      ServicioItemModel(descripcion: '___________________________', monto: 0, punitorios: 0, total: 0),
-      ServicioItemModel(descripcion: '___________________________', monto: 0, punitorios: 0, total: 0),
-    ];
-    final reciboNeutro = ReciboModel(
-      numeroRecibo: _numeroRecibo,
-      propietarioId: 0,
-      fechaEmision: DateFormat('yyyy-MM-dd').format(_fechaEmision),
-      fechaVencimiento: DateFormat('yyyy-MM-dd').format(_fechaVencimiento),
-      montoTotal: 0,
-      montoAbonado: 0,
-      saldo: 0,
-      estado: 'pendiente',
-      usuario: _usuarioCtrl.text.trim(),
-      createdAt: DateTime.now().toIso8601String(),
-      propietarioNombre: '___________________________',
-      inquilinoNombre: '___________________________',
-      direccion: '___________________________',
-      localidad: '',
-      esNeutro: true,
-      servicios: blancoServicios,
-    );
     Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => ReciboPreviewScreen(recibo: reciboNeutro, esNuevo: false),
+        builder: (_) => ReciboBlancoScreen(
+          numeroRecibo: _numeroRecibo,
+          usuario: _usuarioCtrl.text.trim(),
+        ),
       ),
     );
   }
@@ -448,40 +497,14 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
     // Nuevo número de recibo
     final nuevoNumRecibo = await _db.obtenerProximoNumeroRecibo();
 
-    // Descripción con mes/año
-    final meses = [
-      '', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-      'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
-    ];
-    final mesLabel = meses[nuevaEmision.month];
-    final desc = 'Alquiler $mesLabel ${nuevaEmision.year}';
-
-    // Nota automática
+    // Nota automática con períodos
     final periodosData = await _db.obtenerPeriodosPorContrato(contratoId);
-    String notaPeriodo = 'Alquiler $mesLabel ${nuevaEmision.year}.';
-    if (periodosData.isNotEmpty) {
-      Map<String, dynamic>? periodoActual;
-      for (final p in periodosData) {
-        final desde = p['cuota_desde'] as int;
-        final hasta = p['cuota_hasta'] as int;
-        if (nuevaCuota >= desde && nuevaCuota <= hasta) {
-          periodoActual = p;
-          break;
-        }
-      }
-      if (periodoActual != null) {
-        final hasta = periodoActual['cuota_hasta'] as int;
-        final restantes = hasta - nuevaCuota;
-        if (restantes == 0) {
-          notaPeriodo +=
-              ' Última cuota del período vigente (hasta cuota $hasta).';
-        } else {
-          notaPeriodo +=
-              ' Período vigente: cuotas ${periodoActual['cuota_desde']}-$hasta.'
-              ' Quedan $restantes cuota${restantes == 1 ? '' : 's'} para cambio de período.';
-        }
-      }
-    }
+    final (:descripcion, :notaPeriodo) = _generarNotaPeriodo(
+      numeroCuota: nuevaCuota,
+      fechaEmision: nuevaEmision,
+      periodosData: periodosData,
+    );
+    final desc = descripcion;
 
     setState(() {
       _fechaEmision = nuevaEmision;
@@ -503,12 +526,9 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
     });
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Avanzado a cuota $nuevaCuota — $desc'),
-          backgroundColor: const Color(0xFF2E7D32),
-        ),
-      );
+      mostrarNotificacion(context,
+          texto: 'Avanzado a cuota $nuevaCuota — $desc',
+          color: const Color(0xFF2E7D32));
     }
   }
 
@@ -518,20 +538,54 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
       _mostrarError('Seleccioná un contrato');
       return;
     }
+
+    // Obtener teléfono del inquilino
+    final celular = (_contratoSel!['inquilino_celular'] as String? ?? '').trim();
+    final telefono =
+        (_contratoSel!['inquilino_telefono'] as String? ?? '').trim();
+    final rawTel = celular.isNotEmpty ? celular : telefono;
+
+    // Texto del recordatorio (el que el usuario editó en la pestaña de notas)
+    final recordatorio = _recordatorioInqCtrl.text.trim();
+    final direccion = _domicilioCtrl.text.trim();
+
+    if (rawTel.isEmpty) {
+      _mostrarError(
+          'El inquilino no tiene teléfono ni celular cargado. Actualizá los datos del inquilino para poder enviar el aviso por WhatsApp.');
+      return;
+    }
+
     final confirmar = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Enviar Aviso'),
+        title: const Text('Enviar Aviso por WhatsApp'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (_propietarioNombre != null)
-              Text('Propietario: $_propietarioNombre'),
-            if (_inquilinoNombre != null) Text('Inquilino: $_inquilinoNombre'),
+            if (_inquilinoNombre != null)
+              Text('Inquilino: $_inquilinoNombre'),
+            Text('Teléfono: $rawTel'),
+            const SizedBox(height: 10),
+            const Text('Mensaje:',
+                style: TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF5F5F5),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                recordatorio.isEmpty
+                    ? '(recordatorio vacío)'
+                    : recordatorio,
+                style: const TextStyle(fontSize: 13),
+              ),
+            ),
             const SizedBox(height: 12),
             const Text(
-              '¿Confirmar el envío del aviso de recordatorio?',
+              '¿Abrir WhatsApp con el aviso precargado?',
               style: TextStyle(fontWeight: FontWeight.w600),
             ),
           ],
@@ -541,20 +595,52 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
             onPressed: () => Navigator.pop(ctx, false),
             child: const Text('Cancelar'),
           ),
-          ElevatedButton(
+          ElevatedButton.icon(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Confirmar'),
+            icon: const Icon(Icons.chat_outlined, size: 18),
+            label: const Text('Enviar'),
           ),
         ],
       ),
     );
-    if (confirmar == true && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Aviso registrado correctamente'),
-          backgroundColor: Color(0xFF2E7D32),
-        ),
-      );
+    if (confirmar != true || !mounted) return;
+
+    // Armar mensaje con encabezado de la inmobiliaria
+    final mensaje = StringBuffer();
+    mensaje.writeln('*COPPOLA PAVESE Inmobiliaria*');
+    mensaje.writeln('Blandengues 188 - San Miguel del Monte');
+    mensaje.writeln('Tel: 02226 546317 / 02271 412950');
+    mensaje.writeln('');
+    if (_inquilinoNombre != null && _inquilinoNombre!.isNotEmpty) {
+      mensaje.writeln('Estimado/a $_inquilinoNombre,');
+      mensaje.writeln('');
+    }
+    if (recordatorio.isNotEmpty) {
+      mensaje.writeln(recordatorio);
+    } else {
+      mensaje.writeln('Le recordamos que tiene un aviso pendiente.');
+    }
+    if (direccion.isNotEmpty) {
+      mensaje.writeln('');
+      mensaje.writeln('Domicilio: $direccion');
+    }
+
+    try {
+      final tel = normalizarTelefonoAR(rawTel);
+      await abrirWhatsApp(telefono: tel, mensaje: mensaje.toString());
+      if (mounted) {
+        await mostrarConfirmacionWhatsApp(
+          context: context,
+          nombreCompleto: _inquilinoNombre ?? '',
+          telefono: tel,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        mostrarNotificacion(context,
+            texto: 'Error al abrir WhatsApp: $e',
+            color: const Color(0xFFC62828));
+      }
     }
   }
 
@@ -1070,7 +1156,7 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
   Widget _tabEstadoCuenta() {
     final fmt = DateFormat('dd/MM/yyyy');
     final fmtM = NumberFormat.currency(
-        locale: 'es_AR', symbol: '\$', decimalDigits: 0);
+        locale: 'es_AR', symbol: '\$', decimalDigits: 0, customPattern: '\u00A4#,##0');
 
     final serviciosConDesc =
         _servicios.where((s) => s.descripcion.isNotEmpty).toList();
@@ -1373,180 +1459,13 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
 
   // ── Tab 2: Conceptos Extras ───────────────────────────────────
   Widget _tabConceptosExtras() {
-    final fmtM = NumberFormat.currency(locale: 'es_AR', symbol: '\$', decimalDigits: 0);
+    final fmtM = NumberFormat.currency(locale: 'es_AR', symbol: '\$', decimalDigits: 0, customPattern: '\u00A4#,##0');
     final fmtVence = DateFormat('dd/MM/yy');
 
     return SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // ════════════════════════════════════════════════
-          // SECCIÓN 1: CONCEPTOS REGULARES (del contrato)
-          // ════════════════════════════════════════════════
-          Container(
-            color: const Color(0xFF1A3A5C),
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            child: Row(children: [
-              const Icon(Icons.repeat_outlined, color: Colors.white, size: 16),
-              const SizedBox(width: 8),
-              const Expanded(
-                child: Text('Conceptos regulares',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold)),
-              ),
-              OutlinedButton.icon(
-                onPressed: _contratoSel == null
-                    ? null
-                    : () => _abrirDialogoConceptoReg(null),
-                icon: const Icon(Icons.add, size: 14, color: Colors.white),
-                label: const Text('Nuevo concepto regular',
-                    style: TextStyle(fontSize: 11, color: Colors.white)),
-                style: OutlinedButton.styleFrom(
-                  side: const BorderSide(color: Colors.white54),
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-              ),
-            ]),
-          ),
-          // Tabla conceptos regulares
-          if (_conceptosReg.isEmpty)
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 12),
-              color: const Color(0xFFFAFAFA),
-              child: Text(
-                _contratoSel == null
-                    ? 'Seleccioná un contrato para ver sus conceptos regulares.'
-                    : 'Este contrato no tiene conceptos regulares. Presioná "+ Nuevo concepto regular" para agregar.',
-                style: const TextStyle(
-                    fontSize: 11, color: Color(0xFF9E9E9E),
-                    fontStyle: FontStyle.italic),
-              ),
-            )
-          else ...[
-            // Header tabla
-            Container(
-              color: const Color(0xFFECEFF1),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              child: const Row(children: [
-                Expanded(
-                    flex: 4,
-                    child: Text('Concepto',
-                        style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF546E7A)))),
-                Expanded(
-                    flex: 2,
-                    child: Text('Monto',
-                        textAlign: TextAlign.right,
-                        style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF546E7A)))),
-                Expanded(
-                    flex: 2,
-                    child: Text('Porcentual',
-                        textAlign: TextAlign.right,
-                        style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF546E7A)))),
-                SizedBox(
-                    width: 90,
-                    child: Text('Comprobante',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: Color(0xFF546E7A)))),
-                SizedBox(width: 32),
-              ]),
-            ),
-            // Filas
-            ..._conceptosReg.asMap().entries.map((e) {
-              final i = e.key;
-              final c = e.value;
-              return Container(
-                color: i.isEven ? Colors.white : const Color(0xFFF9F9F9),
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                child: Row(children: [
-                  Expanded(
-                    flex: 4,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(c.descripcion ?? '—',
-                            style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500)),
-                        if (c.periodoTipo != PeriodoTipo.todos)
-                          Text(
-                            _labelPeriodo(c),
-                            style: const TextStyle(
-                                fontSize: 9,
-                                color: Color(0xFF9E9E9E)),
-                          ),
-                      ],
-                    ),
-                  ),
-                  Expanded(
-                    flex: 2,
-                    child: Text(
-                      fmtM.format(c.monto),
-                      textAlign: TextAlign.right,
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ),
-                  Expanded(
-                    flex: 2,
-                    child: Text(
-                      c.porcentual > 0
-                          ? '${c.porcentual.toStringAsFixed(2)}%'
-                          : '—',
-                      textAlign: TextAlign.right,
-                      style: const TextStyle(
-                          fontSize: 12, color: Color(0xFF546E7A)),
-                    ),
-                  ),
-                  SizedBox(
-                    width: 90,
-                    child: Center(
-                      child: Icon(
-                        c.tieneComprobante
-                            ? Icons.check_box_outlined
-                            : Icons.check_box_outline_blank,
-                        size: 16,
-                        color: c.tieneComprobante
-                            ? const Color(0xFF2E7D32)
-                            : const Color(0xFFBDBDBD),
-                      ),
-                    ),
-                  ),
-                  SizedBox(
-                    width: 32,
-                    child: IconButton(
-                      icon: const Icon(Icons.edit_outlined,
-                          size: 15, color: Color(0xFF1A3A5C)),
-                      onPressed: () => _abrirDialogoConceptoReg(c),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
-                      tooltip: 'Editar',
-                    ),
-                  ),
-                ]),
-              );
-            }),
-          ],
-
-          const SizedBox(height: 8),
-
           // ════════════════════════════════════════════════
           // SECCIÓN 2: CONCEPTO ÚNICO (agregar al recibo)
           // ════════════════════════════════════════════════
@@ -1623,12 +1542,25 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
                     ),
                   ),
                   SizedBox(
-                    width: 90,
-                    child: Text(
-                      fmtM.format(s.total),
+                    width: 110,
+                    child: TextField(
+                      controller: s.montoCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      inputFormatters: [
+                        FilteringTextInputFormatter.allow(RegExp(r'[\d,.]')),
+                      ],
                       textAlign: TextAlign.right,
-                      style: const TextStyle(
-                          fontSize: 12, fontWeight: FontWeight.bold),
+                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                      decoration: const InputDecoration(
+                        prefixText: '\$ ',
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (v) {
+                        s.monto = double.tryParse(v.replaceAll(',', '.')) ?? 0;
+                        setState(() {});
+                      },
                     ),
                   ),
                   SizedBox(
@@ -1881,46 +1813,6 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
         ],
       ),
     );
-  }
-
-  // ── Helper: label período ─────────────────────────────────────
-  String _labelPeriodo(ConceptoRegularModel c) {
-    switch (c.periodoTipo) {
-      case PeriodoTipo.pares:
-        return 'Meses pares';
-      case PeriodoTipo.impares:
-        return 'Meses impares';
-      case PeriodoTipo.especifico:
-        final mesesNombres = ['Ene','Feb','Mar','Abr','May','Jun',
-                              'Jul','Ago','Sep','Oct','Nov','Dic'];
-        return c.mesesLista
-            .where((m) => m >= 1 && m <= 12)
-            .map((m) => mesesNombres[m - 1])
-            .join(', ');
-      default:
-        return 'Todos los meses';
-    }
-  }
-
-  // ── Abrir/recargar diálogo concepto regular ───────────────────
-  Future<void> _abrirDialogoConceptoReg(ConceptoRegularModel? existente) async {
-    if (_contratoSel == null) return;
-    await showDialog<ConceptoRegularModel?>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => ConceptoRegularDialog(
-        contratoId: _contratoSel!['id'] as int,
-        existente: existente,
-      ),
-    );
-    // null = eliminado o cancelado; ConceptoRegularModel = guardado
-    // En cualquier caso recargar la lista
-    final updated = await _db.obtenerConceptosRegularesPorContrato(
-        _contratoSel!['id'] as int);
-    setState(() {
-      _conceptosReg =
-          updated.map((m) => ConceptoRegularModel.fromMap(m)).toList();
-    });
   }
 
   // ── Agregar concepto único al recibo ──────────────────────────

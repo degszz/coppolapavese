@@ -28,7 +28,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       dbPath,
-      version: 5, // v5: tabla garantes
+      version: 8, // v8: porcentaje en periodos_fijos
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -131,6 +131,12 @@ class DatabaseHelper {
     await _migrarV4(db);
     // tablas v5
     await _migrarV5(db);
+    // tablas v6
+    await _migrarV6(db);
+    // tablas v7
+    await _migrarV7(db);
+    // tablas v8
+    await _migrarV8(db);
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -149,6 +155,15 @@ class DatabaseHelper {
     }
     if (oldVersion < 5) {
       await _migrarV5(db);
+    }
+    if (oldVersion < 6) {
+      await _migrarV6(db);
+    }
+    if (oldVersion < 7) {
+      await _migrarV7(db);
+    }
+    if (oldVersion < 8) {
+      await _migrarV8(db);
     }
   }
 
@@ -186,6 +201,60 @@ class DatabaseHelper {
         FOREIGN KEY (contrato_id) REFERENCES contratos(id) ON DELETE CASCADE
       )
     ''');
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // MIGRACIÓN v6 — fichas de propiedad + imágenes
+  // ════════════════════════════════════════════════════════════════
+  Future<void> _migrarV6(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS propiedad_fichas (
+        id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+        propiedad_id          INTEGER NOT NULL UNIQUE,
+        operacion             TEXT NOT NULL DEFAULT 'Alquiler',
+        precio                REAL DEFAULT 0,
+        moneda                TEXT NOT NULL DEFAULT 'ARS',
+        ambientes             INTEGER DEFAULT 0,
+        dormitorios           INTEGER DEFAULT 0,
+        banos                 INTEGER DEFAULT 0,
+        cochera               INTEGER DEFAULT 0,
+        superficie_total      REAL DEFAULT 0,
+        superficie_cubierta   REAL DEFAULT 0,
+        antiguedad            TEXT,
+        ambientes_lista       TEXT DEFAULT '[]',
+        servicios_lista       TEXT DEFAULT '[]',
+        descripcion           TEXT DEFAULT '',
+        FOREIGN KEY (propiedad_id) REFERENCES propiedades(id) ON DELETE CASCADE
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS propiedad_imagenes (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        propiedad_id    INTEGER NOT NULL,
+        ruta            TEXT NOT NULL,
+        orden           INTEGER NOT NULL DEFAULT 0,
+        FOREIGN KEY (propiedad_id) REFERENCES propiedades(id) ON DELETE CASCADE
+      )
+    ''');
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // MIGRACIÓN v7 — ubicacion_ficha en propiedad_fichas
+  // ════════════════════════════════════════════════════════════════
+  Future<void> _migrarV7(Database db) async {
+    try {
+      await db.execute("ALTER TABLE propiedad_fichas ADD COLUMN ubicacion_ficha TEXT DEFAULT ''");
+    } catch (_) {
+      // columna ya existe
+    }
+  }
+
+  Future<void> _migrarV8(Database db) async {
+    try {
+      await db.execute("ALTER TABLE periodos_fijos ADD COLUMN porcentaje REAL DEFAULT 0");
+    } catch (_) {
+      // columna ya existe
+    }
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -547,6 +616,7 @@ class DatabaseHelper {
         p.email   AS propietario_email,
         i.nombre  AS inquilino_nombre,
         i.telefono AS inquilino_telefono,
+        i.celular  AS inquilino_celular,
         d.direccion,
         d.localidad
       FROM recibos r
@@ -620,6 +690,29 @@ class DatabaseHelper {
     );
   }
 
+  /// Obtiene los servicios del último recibo de un contrato dado.
+  /// Sirve para pre-cargar los mismos conceptos únicos en el siguiente recibo.
+  Future<List<Map<String, dynamic>>> obtenerServiciosUltimoRecibo(
+      int contratoId) async {
+    final db = await database;
+    // Buscar el último recibo del contrato
+    final recibos = await db.query(
+      'recibos',
+      columns: ['id'],
+      where: 'contrato_id = ?',
+      whereArgs: [contratoId],
+      orderBy: 'id DESC',
+      limit: 1,
+    );
+    if (recibos.isEmpty) return [];
+    final ultimoReciboId = recibos.first['id'] as int;
+    return await db.query(
+      'servicios_recibo',
+      where: 'recibo_id = ?',
+      whereArgs: [ultimoReciboId],
+    );
+  }
+
   // ════════════════════════════════════════════════════════════════
   // NUEVO — CONTRATOS — CRUD
   // ════════════════════════════════════════════════════════════════
@@ -680,6 +773,21 @@ class DatabaseHelper {
       ORDER BY c.id DESC
       LIMIT 1
     ''', [propietarioId]);
+    return result.isNotEmpty ? result.first : null;
+  }
+
+  /// Devuelve el contrato activo (no rescindido) más reciente de un inquilino.
+  /// Si no hay activos, devuelve cualquiera. Null si el inquilino no tiene contratos.
+  Future<Map<String, dynamic>?> obtenerContratoActivoPorInquilino(
+      int inquilinoId) async {
+    final db = await database;
+    final result = await db.rawQuery('''
+      SELECT c.*
+      FROM contratos c
+      WHERE c.inquilino_id = ?
+      ORDER BY COALESCE(c.rescindido, 0) ASC, c.id DESC
+      LIMIT 1
+    ''', [inquilinoId]);
     return result.isNotEmpty ? result.first : null;
   }
 
@@ -797,6 +905,50 @@ class DatabaseHelper {
   // ════════════════════════════════════════════════════════════════
 
   /// Resumen por propietario: total cobrado, total pendiente, saldo
+  /// Búsqueda global: propietarios, inquilinos, propiedades, contratos
+  Future<List<Map<String, dynamic>>> busquedaGlobal(String query) async {
+    final db = await database;
+    final q = '%$query%';
+    final resultados = <Map<String, dynamic>>[];
+
+    // Propietarios
+    final props = await db.rawQuery(
+      "SELECT id, nombre, 'propietario' AS tipo FROM propietarios WHERE nombre LIKE ?",
+      [q],
+    );
+    resultados.addAll(props);
+
+    // Inquilinos
+    final inqs = await db.rawQuery(
+      "SELECT id, nombre || ' ' || COALESCE(apellido, '') AS nombre, 'inquilino' AS tipo FROM inquilinos WHERE nombre LIKE ? OR apellido LIKE ?",
+      [q, q],
+    );
+    resultados.addAll(inqs);
+
+    // Propiedades
+    final prods = await db.rawQuery(
+      "SELECT id, direccion || CASE WHEN localidad != '' THEN ', ' || localidad ELSE '' END AS nombre, 'propiedad' AS tipo FROM propiedades WHERE direccion LIKE ? OR localidad LIKE ?",
+      [q, q],
+    );
+    resultados.addAll(prods);
+
+    // Contratos (por dirección propiedad o inquilino)
+    final contr = await db.rawQuery(
+      "SELECT c.id, COALESCE(pr.direccion, '') || ' — ' || COALESCE(i.nombre, '') || ' ' || COALESCE(i.apellido, '') AS nombre, 'contrato' AS tipo FROM contratos c LEFT JOIN propiedades pr ON c.propiedad_id = pr.id LEFT JOIN inquilinos i ON c.inquilino_id = i.id WHERE pr.direccion LIKE ? OR i.nombre LIKE ? OR i.apellido LIKE ? LIMIT 20",
+      [q, q, q],
+    );
+    resultados.addAll(contr);
+
+    // Garantes
+    final gars = await db.rawQuery(
+      "SELECT id, nombre, 'garante' AS tipo FROM garantes WHERE nombre LIKE ?",
+      [q],
+    );
+    resultados.addAll(gars);
+
+    return resultados;
+  }
+
   Future<List<Map<String, dynamic>>> obtenerResumenPorPropietario() async {
     final db = await database;
     return await db.rawQuery('''
@@ -804,18 +956,21 @@ class DatabaseHelper {
         p.id,
         p.nombre                        AS propietario_nombre,
         p.telefono                      AS propietario_telefono,
-        i.nombre                        AS inquilino_nombre,
-        d.direccion,
-        d.localidad,
-        COUNT(r.id)                     AS total_recibos,
-        COALESCE(SUM(r.monto_total),  0) AS total_monto,
-        COALESCE(SUM(r.monto_abonado),0) AS total_cobrado,
-        COALESCE(SUM(r.saldo),        0) AS total_pendiente
+        (SELECT i.nombre FROM inquilinos i WHERE i.propietario_id = p.id LIMIT 1)
+                                        AS inquilino_nombre,
+        (SELECT d.direccion FROM domicilios d WHERE d.propietario_id = p.id LIMIT 1)
+                                        AS direccion,
+        (SELECT d.localidad FROM domicilios d WHERE d.propietario_id = p.id LIMIT 1)
+                                        AS localidad,
+        (SELECT COUNT(*) FROM recibos r WHERE r.propietario_id = p.id)
+                                        AS total_recibos,
+        (SELECT COALESCE(SUM(r.monto_total), 0) FROM recibos r WHERE r.propietario_id = p.id)
+                                        AS total_monto,
+        (SELECT COALESCE(SUM(r.monto_abonado), 0) FROM recibos r WHERE r.propietario_id = p.id)
+                                        AS total_cobrado,
+        (SELECT COALESCE(SUM(r.saldo), 0) FROM recibos r WHERE r.propietario_id = p.id)
+                                        AS total_pendiente
       FROM propietarios p
-      LEFT JOIN inquilinos  i ON i.propietario_id = p.id
-      LEFT JOIN domicilios  d ON d.propietario_id = p.id
-      LEFT JOIN recibos     r ON r.propietario_id = p.id
-      GROUP BY p.id
       ORDER BY p.nombre ASC
     ''');
   }
@@ -869,6 +1024,64 @@ class DatabaseHelper {
     };
   }
 
+  /// Datos mensuales de ingresos (total emitido) y cobros (abonado) por mes
+  Future<List<Map<String, dynamic>>> obtenerDatosMensuales(
+      {int meses = 12}) async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT
+        strftime('%Y-%m', fecha_emision) AS mes,
+        COALESCE(SUM(monto_total), 0)   AS total_emitido,
+        COALESCE(SUM(monto_abonado), 0) AS total_cobrado
+      FROM recibos
+      WHERE fecha_emision >= date('now', '-$meses months')
+      GROUP BY strftime('%Y-%m', fecha_emision)
+      ORDER BY mes ASC
+    ''');
+  }
+
+  /// Estadísticas generales de la app (conteos)
+  Future<Map<String, int>> obtenerConteoGeneral() async {
+    final db = await database;
+    final totalContratos = Sqflite.firstIntValue(
+          await db.rawQuery('SELECT COUNT(*) FROM contratos')) ?? 0;
+    final contratosActivos = Sqflite.firstIntValue(
+          await db.rawQuery(
+              "SELECT COUNT(*) FROM contratos WHERE rescindido = 0")) ?? 0;
+    final totalPropiedades = Sqflite.firstIntValue(
+          await db.rawQuery('SELECT COUNT(*) FROM propiedades')) ?? 0;
+    final totalPropietarios = Sqflite.firstIntValue(
+          await db.rawQuery('SELECT COUNT(*) FROM propietarios')) ?? 0;
+    final totalInquilinos = Sqflite.firstIntValue(
+          await db.rawQuery('SELECT COUNT(*) FROM inquilinos')) ?? 0;
+    final totalRecibos = Sqflite.firstIntValue(
+          await db.rawQuery('SELECT COUNT(*) FROM recibos')) ?? 0;
+    return {
+      'contratos': totalContratos,
+      'contratos_activos': contratosActivos,
+      'propiedades': totalPropiedades,
+      'propietarios': totalPropietarios,
+      'inquilinos': totalInquilinos,
+      'recibos': totalRecibos,
+    };
+  }
+
+  /// Contratos creados por mes (últimos N meses)
+  Future<List<Map<String, dynamic>>> obtenerContratosPorMes(
+      {int meses = 12}) async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT
+        strftime('%Y-%m', fecha_inicio) AS mes,
+        COUNT(*) AS cantidad
+      FROM contratos
+      WHERE fecha_inicio IS NOT NULL
+        AND fecha_inicio != ''
+      GROUP BY strftime('%Y-%m', fecha_inicio)
+      ORDER BY mes ASC
+    ''');
+  }
+
   /// Recibos pendientes o parciales (todas las fechas) con datos del propietario
   Future<List<Map<String, dynamic>>> obtenerRecibosPendientes() async {
     final db = await database;
@@ -878,6 +1091,9 @@ class DatabaseHelper {
         p.nombre   AS propietario_nombre,
         p.telefono AS propietario_telefono,
         i.nombre   AS inquilino_nombre,
+        i.apellido AS inquilino_apellido,
+        i.celular  AS inquilino_celular,
+        i.telefono AS inquilino_telefono,
         d.direccion,
         d.localidad
       FROM recibos r
@@ -885,7 +1101,7 @@ class DatabaseHelper {
       LEFT JOIN inquilinos   i ON r.inquilino_id   = i.id
       LEFT JOIN domicilios   d ON r.domicilio_id   = d.id
       WHERE r.estado IN ('pendiente', 'parcial')
-      ORDER BY r.fecha_emision ASC
+      ORDER BY r.id DESC
     ''');
   }
 
@@ -955,6 +1171,8 @@ class DatabaseHelper {
         r.*,
         p.nombre  AS propietario_nombre,
         i.nombre  AS inquilino_nombre,
+        i.celular AS inquilino_celular,
+        i.telefono AS inquilino_telefono,
         d.direccion,
         d.localidad,
         c.id      AS contrato_id,
@@ -1002,6 +1220,65 @@ class DatabaseHelper {
     );
   }
 
+  /// Propiedades vinculadas a un propietario via contratos activos
+  Future<List<Map<String, dynamic>>> obtenerPropiedadesDeContratosPorPropietario(
+      int propietarioId) async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT DISTINCT pr.id, pr.direccion, pr.localidad
+      FROM contratos c
+      INNER JOIN propiedades pr ON c.propiedad_id = pr.id
+      WHERE c.propietario_id = ?
+      ORDER BY pr.direccion ASC
+    ''', [propietarioId]);
+  }
+
+  /// Contratos de un propietario con info de propiedad e inquilino
+  Future<List<Map<String, dynamic>>> obtenerContratosPorPropietario(
+      int propietarioId) async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT
+        c.*,
+        pr.direccion  AS propiedad_direccion,
+        pr.localidad  AS propiedad_localidad,
+        i.nombre      AS inquilino_nombre,
+        i.apellido    AS inquilino_apellido
+      FROM contratos c
+      LEFT JOIN propiedades pr ON c.propiedad_id = pr.id
+      LEFT JOIN inquilinos  i  ON c.inquilino_id = i.id
+      WHERE c.propietario_id = ?
+      ORDER BY pr.direccion ASC
+    ''', [propietarioId]);
+  }
+
+  /// Recibos de un contrato específico
+  Future<List<Map<String, dynamic>>> obtenerRecibosPorContrato(
+      int contratoId) async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT
+        r.*,
+        p.nombre  AS propietario_nombre,
+        i.nombre  AS inquilino_nombre,
+        i.celular AS inquilino_celular,
+        i.telefono AS inquilino_telefono,
+        COALESCE(pr.direccion, d.direccion, '') AS direccion,
+        COALESCE(pr.localidad, d.localidad, '') AS localidad,
+        c.notas_recibo,
+        c.alertar_inquilino,
+        c.alertar_propietario
+      FROM recibos r
+      LEFT JOIN propietarios p  ON r.propietario_id = p.id
+      LEFT JOIN inquilinos   i  ON r.inquilino_id   = i.id
+      LEFT JOIN domicilios   d  ON r.domicilio_id   = d.id
+      LEFT JOIN contratos    c  ON r.contrato_id    = c.id
+      LEFT JOIN propiedades  pr ON c.propiedad_id   = pr.id
+      WHERE r.contrato_id = ?
+      ORDER BY r.fecha_emision DESC
+    ''', [contratoId]);
+  }
+
   Future<Map<String, dynamic>?> obtenerPropiedadPorId(int id) async {
     final db = await database;
     final result = await db.rawQuery('''
@@ -1021,6 +1298,53 @@ class DatabaseHelper {
   Future<int> eliminarPropiedad(int id) async {
     final db = await database;
     return await db.delete('propiedades', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // FICHAS DE PROPIEDAD — CRUD
+  // ════════════════════════════════════════════════════════════════
+
+  Future<Map<String, dynamic>?> obtenerFicha(int propiedadId) async {
+    final db = await database;
+    final result = await db.query('propiedad_fichas',
+        where: 'propiedad_id = ?', whereArgs: [propiedadId]);
+    return result.isNotEmpty ? result.first : null;
+  }
+
+  Future<void> upsertFicha(int propiedadId, Map<String, dynamic> data) async {
+    final db = await database;
+    final existe = await obtenerFicha(propiedadId);
+    data['propiedad_id'] = propiedadId;
+    if (existe != null) {
+      await db.update('propiedad_fichas', data,
+          where: 'propiedad_id = ?', whereArgs: [propiedadId]);
+    } else {
+      await db.insert('propiedad_fichas', data);
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // IMÁGENES DE PROPIEDAD — CRUD
+  // ════════════════════════════════════════════════════════════════
+
+  Future<int> insertarImagenPropiedad(Map<String, dynamic> data) async {
+    final db = await database;
+    return await db.insert('propiedad_imagenes', data);
+  }
+
+  Future<List<Map<String, dynamic>>> obtenerImagenesPropiedad(
+      int propiedadId) async {
+    final db = await database;
+    return await db.query('propiedad_imagenes',
+        where: 'propiedad_id = ?',
+        whereArgs: [propiedadId],
+        orderBy: 'orden ASC');
+  }
+
+  Future<int> eliminarImagenPropiedad(int id) async {
+    final db = await database;
+    return await db.delete('propiedad_imagenes',
+        where: 'id = ?', whereArgs: [id]);
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -1081,6 +1405,13 @@ class DatabaseHelper {
         where: 'contrato_id = ?', whereArgs: [contratoId]);
   }
 
+  Future<Map<String, dynamic>?> obtenerGarantePorId(int id) async {
+    final db = await database;
+    final result = await db.query('garantes',
+        where: 'id = ?', whereArgs: [id], limit: 1);
+    return result.isNotEmpty ? result.first : null;
+  }
+
   Future<void> eliminarGarantesPorContrato(int contratoId) async {
     final db = await database;
     await db.delete('garantes',
@@ -1118,12 +1449,14 @@ class DatabaseHelper {
         pr.tipo           AS propiedad_tipo,
         i.nombre          AS inquilino_nombre,
         i.apellido        AS inquilino_apellido,
+        i.celular         AS inquilino_celular,
+        i.telefono        AS inquilino_telefono,
         p.nombre          AS propietario_nombre
       FROM contratos c
       LEFT JOIN propiedades  pr ON c.propiedad_id  = pr.id
       LEFT JOIN inquilinos   i  ON c.inquilino_id  = i.id
       LEFT JOIN propietarios p  ON c.propietario_id = p.id
-      ORDER BY c.id DESC
+      ORDER BY pr.direccion ASC, i.apellido ASC, i.nombre ASC
     ''');
   }
 
@@ -1138,17 +1471,30 @@ class DatabaseHelper {
     return cnt + 1;
   }
 
-  /// Monto del período vigente para una cuota dada
+  /// Monto del último período cargado del contrato.
+  /// Siempre toma el período más reciente (mayor cuota_hasta).
   Future<double> obtenerMontoPeriodo(int contratoId, int numeroCuota) async {
     final db = await database;
-    final periodos = await db.query(
+    // Buscar el período fijo que contiene la cuota actual
+    final periodoActual = await db.query(
       'periodos_fijos',
       where: 'contrato_id = ? AND cuota_desde <= ? AND cuota_hasta >= ?',
       whereArgs: [contratoId, numeroCuota, numeroCuota],
       limit: 1,
     );
-    if (periodos.isNotEmpty) {
-      return (periodos.first['monto'] as num).toDouble();
+    if (periodoActual.isNotEmpty) {
+      return (periodoActual.first['monto'] as num).toDouble();
+    }
+    // Fallback: último período cargado (para cuotas fuera de rango)
+    final ultimoPeriodo = await db.query(
+      'periodos_fijos',
+      where: 'contrato_id = ?',
+      whereArgs: [contratoId],
+      orderBy: 'cuota_hasta DESC',
+      limit: 1,
+    );
+    if (ultimoPeriodo.isNotEmpty) {
+      return (ultimoPeriodo.first['monto'] as num).toDouble();
     }
     // Fallback: alquiler_primer_periodo del contrato
     final contrato = await db.query(
@@ -1162,5 +1508,83 @@ class DatabaseHelper {
       return (contrato.first['alquiler_primer_periodo'] as num?)?.toDouble() ?? 0.0;
     }
     return 0.0;
+  }
+
+  /// Devuelve los recibos ya emitidos cuya fecha de vencimiento (o emisión
+  /// si no hay vencimiento) cae dentro del rango [desde, hasta].
+  /// Incluye datos del contrato, inquilino, propiedad y propietario para
+  /// poder mostrarlos en el calendario junto a las proyecciones pendientes.
+  Future<List<Map<String, dynamic>>> obtenerRecibosEmitidosPorFecha({
+    required String desde,
+    required String hasta,
+  }) async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT
+        r.id                        AS recibo_id,
+        r.numero_recibo,
+        r.contrato_id,
+        r.numero_cuota,
+        r.fecha_emision,
+        r.fecha_vencimiento,
+        r.monto_total,
+        r.estado,
+        c.cuotas_total,
+        c.fecha_inicio,
+        c.primer_dia_pago,
+        pr.direccion                AS propiedad_direccion,
+        i.nombre                    AS inquilino_nombre,
+        i.apellido                  AS inquilino_apellido,
+        i.celular                   AS inquilino_celular,
+        i.telefono                  AS inquilino_telefono,
+        p.nombre                    AS propietario_nombre
+      FROM recibos r
+      LEFT JOIN contratos    c  ON r.contrato_id    = c.id
+      LEFT JOIN propiedades  pr ON c.propiedad_id   = pr.id
+      LEFT JOIN inquilinos   i  ON r.inquilino_id   = i.id
+      LEFT JOIN propietarios p  ON r.propietario_id = p.id
+      WHERE r.contrato_id IS NOT NULL
+        AND COALESCE(r.fecha_vencimiento, r.fecha_emision)
+            BETWEEN ? AND ?
+      ORDER BY COALESCE(r.fecha_vencimiento, r.fecha_emision) ASC
+    ''', [desde, hasta]);
+  }
+
+  /// Devuelve los datos necesarios para proyectar los próximos recibos
+  /// de cada contrato activo. Incluye:
+  /// - datos del contrato (fecha_inicio, primer_dia_pago, cuotas_total)
+  /// - cuántas cuotas ya fueron emitidas (num_cuotas_emitidas)
+  /// - datos del inquilino, propiedad y propietario
+  /// - monto actual (del último período fijo, si hay)
+  Future<List<Map<String, dynamic>>> obtenerDatosProyeccionContratos() async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT
+        c.id,
+        c.fecha_inicio,
+        c.cuotas_total,
+        c.primer_dia_pago,
+        c.alquiler_primer_periodo,
+        pr.direccion                AS propiedad_direccion,
+        i.nombre                    AS inquilino_nombre,
+        i.apellido                  AS inquilino_apellido,
+        i.celular                   AS inquilino_celular,
+        i.telefono                  AS inquilino_telefono,
+        p.nombre                    AS propietario_nombre,
+        (SELECT COUNT(*) FROM recibos r WHERE r.contrato_id = c.id)
+                                    AS num_cuotas_emitidas,
+        (SELECT pf.monto FROM periodos_fijos pf
+          WHERE pf.contrato_id = c.id
+          ORDER BY pf.cuota_hasta DESC
+          LIMIT 1)                  AS monto_periodo_actual
+      FROM contratos c
+      LEFT JOIN propiedades  pr ON c.propiedad_id  = pr.id
+      LEFT JOIN inquilinos   i  ON c.inquilino_id  = i.id
+      LEFT JOIN propietarios p  ON c.propietario_id = p.id
+      WHERE COALESCE(c.rescindido, 0) = 0
+        AND c.fecha_inicio IS NOT NULL
+        AND c.fecha_inicio != ''
+      ORDER BY c.id ASC
+    ''');
   }
 }

@@ -6,6 +6,7 @@ import '../../database/database_helper.dart';
 import '../../models/propiedad_model.dart';
 import '../../models/inquilino_model.dart';
 import '../../models/periodo_fijo_model.dart';
+import '../../utils/snackbar_helper.dart';
 
 // ════════════════════════════════════════════════════════════
 // MAIN SCREEN
@@ -38,15 +39,23 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
   // ── Propietario ───────────────────────────────────────────
   List<Map<String, dynamic>> _propietariosRaw = [];
   int? _propietarioManualId; // usado cuando propiedad/inquilino no tienen propietario
+  bool _propietarioInicializado = false; // para auto-derivar solo 1 vez
 
   // ── Períodos ──────────────────────────────────────────────
   DateTime? _fechaInicio;
   int _cuotasTotal = 36;
+  // Controller dedicado: evita que el TextFormField "vuelva" al
+  // initialValue tras un setState (bug típico con initialValue).
+  final _cuotasTotalCtrl = TextEditingController(text: '36');
   DateTime? _fechaFin;
 
   final _alquilerCtrl = TextEditingController(text: '0');
   final _hastaCuotaCtrl = TextEditingController(text: '12');
+  final _porcentajeCtrl = TextEditingController(text: '');
   List<PeriodoFijoModel> _periodosFijos = [];
+
+  /// Filas extra de períodos (desde el 2do en adelante)
+  List<_PeriodoRow> _periodosExtra = [];
 
   // ── Recargos ──────────────────────────────────────────────
   final _primerDiaPagoCtrl = TextEditingController(text: '1');
@@ -71,8 +80,15 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
 
   @override
   void dispose() {
+    _cuotasTotalCtrl.dispose();
     _alquilerCtrl.dispose();
     _hastaCuotaCtrl.dispose();
+    _porcentajeCtrl.dispose();
+    for (final r in _periodosExtra) {
+      r.montoCtrl.dispose();
+      r.hastaCtrl.dispose();
+      r.porcentajeCtrl.dispose();
+    }
     _primerDiaPagoCtrl.dispose();
     _diasGraciaCtrl.dispose();
     _cobrarDesdiaDiaCtrl.dispose();
@@ -101,6 +117,7 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
         final d = widget.datosExistentes!;
         final propId = d['propiedad_id'] as int?;
         final inqId = d['inquilino_id'] as int?;
+        final propietarioIdExistente = d['propietario_id'] as int?;
 
         if (propId != null) {
           try {
@@ -112,6 +129,9 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
             inqSel = inquilinos.firstWhere((i) => i.id == inqId);
           } catch (_) {}
         }
+        // Siempre cargar el propietario del contrato existente
+        _propietarioManualId = propietarioIdExistente;
+        _propietarioInicializado = true;
 
         // Fechas
         final fi = d['fecha_inicio'] as String?;
@@ -128,6 +148,7 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
         }
 
         _cuotasTotal = d['cuotas_total'] as int? ?? 36;
+        _cuotasTotalCtrl.text = _cuotasTotal.toString();
 
         _alquilerCtrl.text =
             (d['alquiler_primer_periodo'] as num? ?? 0).toString();
@@ -160,6 +181,8 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
           _periodosFijos = periodosMaps
               .map((m) => PeriodoFijoModel.fromMap(m))
               .toList();
+          // Reconstruir filas extra desde períodos guardados
+          _cargarPeriodosEnFilas();
           _garantes = (await _db.obtenerGarantesPorContrato(contratoId))
               .map((g) => Map<String, dynamic>.from(g))
               .toList();
@@ -177,9 +200,9 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al cargar datos: $e')),
-        );
+        mostrarNotificacion(context,
+            texto: 'Error al cargar datos: $e',
+            color: const Color(0xFFC62828));
       }
     }
   }
@@ -222,33 +245,33 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
 
   Future<void> _guardar() async {
     if (_propiedadSel == null && _inquilinoSel == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content:
-              Text('Debe seleccionar al menos una propiedad o un inquilino'),
-          backgroundColor: Color(0xFFC62828),
-        ),
-      );
+      mostrarNotificacion(context,
+          texto: 'Debe seleccionar al menos una propiedad o un inquilino',
+          color: const Color(0xFFC62828));
       return;
     }
 
-    final propietarioId = _propiedadSel?.propietarioId
-        ?? _inquilinoSel?.propietarioId
-        ?? _propietarioManualId;
+    final propietarioId = _propietarioManualId
+        ?? _propiedadSel?.propietarioId
+        ?? _inquilinoSel?.propietarioId;
 
     if (propietarioId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-              'Seleccione un propietario para el contrato'),
-          backgroundColor: Color(0xFFC62828),
-        ),
-      );
+      mostrarNotificacion(context,
+          texto: 'Seleccione un propietario para el contrato',
+          color: const Color(0xFFC62828));
       return;
     }
 
     setState(() => _guardando = true);
     try {
+      // Sincronizar _cuotasTotal con el controller, por si el último
+      // onChanged no llegó a dispararse (p.ej. si el foco se perdió de
+      // forma abrupta al hacer click en "Guardar").
+      final cuotasFromCtrl = int.tryParse(_cuotasTotalCtrl.text);
+      if (cuotasFromCtrl != null && cuotasFromCtrl > 0) {
+        _cuotasTotal = cuotasFromCtrl;
+      }
+
       final Map<String, dynamic> datos = {
         'propiedad_id': _propiedadSel?.id,
         'inquilino_id': _inquilinoSel?.id,
@@ -289,6 +312,7 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                 'cuota_desde': p.cuotaDesde,
                 'cuota_hasta': p.cuotaHasta,
                 'monto': p.monto,
+                'porcentaje': p.porcentaje,
               })
           .toList();
       await _db.upsertPeriodosFijos(contratoId, periodosMaps);
@@ -297,24 +321,18 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
       await _db.upsertGarantes(contratoId, _garantes);
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(_esEdicion
+        mostrarNotificacion(context,
+            texto: _esEdicion
                 ? 'Contrato actualizado correctamente'
-                : 'Contrato registrado correctamente'),
-            backgroundColor: const Color(0xFF2E7D32),
-          ),
-        );
+                : 'Contrato registrado correctamente',
+            color: const Color(0xFF2E7D32));
         Navigator.pop(context, true);
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al guardar: $e'),
-            backgroundColor: const Color(0xFFC62828),
-          ),
-        );
+        mostrarNotificacion(context,
+            texto: 'Error al guardar: $e',
+            color: const Color(0xFFC62828));
       }
     } finally {
       if (mounted) setState(() => _guardando = false);
@@ -380,23 +398,172 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
     }
   }
 
-  Future<void> _abrirPeriodosFijosDialog() async {
-    final resultado = await showDialog<List<Map<String, dynamic>>>(
-      context: context,
-      builder: (_) => PeriodosFijosDialog(periodosIniciales: _periodosFijos),
-    );
-    if (resultado != null && mounted) {
-      setState(() {
-        _periodosFijos = resultado
-            .map((m) => PeriodoFijoModel(
-                  contratoId: 0,
-                  cuotaDesde: m['desde'] as int,
-                  cuotaHasta: m['hasta'] as int,
-                  monto: (m['monto'] as num).toDouble(),
-                ))
-            .toList();
-      });
+  /// Carga períodos guardados en los controllers de la UI
+  void _cargarPeriodosEnFilas() {
+    if (_periodosFijos.isEmpty) return;
+    // Primer período va a los controllers principales
+    final p0 = _periodosFijos.first;
+    _alquilerCtrl.text = p0.monto.toStringAsFixed(0);
+    _hastaCuotaCtrl.text = p0.cuotaHasta.toString();
+    _porcentajeCtrl.text =
+        p0.porcentaje > 0 ? p0.porcentaje.toStringAsFixed(1) : '';
+
+    // Resto va a filas extra
+    for (final r in _periodosExtra) {
+      r.montoCtrl.dispose();
+      r.hastaCtrl.dispose();
+      r.porcentajeCtrl.dispose();
     }
+    _periodosExtra = [];
+    for (int i = 1; i < _periodosFijos.length; i++) {
+      final p = _periodosFijos[i];
+      _periodosExtra.add(_PeriodoRow(
+        montoCtrl: TextEditingController(text: p.monto.toStringAsFixed(0)),
+        hastaCtrl: TextEditingController(text: p.cuotaHasta.toString()),
+        porcentajeCtrl: TextEditingController(
+            text: p.porcentaje > 0 ? p.porcentaje.toStringAsFixed(1) : ''),
+        cuotaDesde: p.cuotaDesde,
+      ));
+    }
+  }
+
+  /// Recalcula períodos desde los controllers y genera filas nuevas si hay %
+  void _recalcularPeriodos() {
+    final monto1 = double.tryParse(_alquilerCtrl.text) ?? 0;
+    final hasta1 = int.tryParse(_hastaCuotaCtrl.text) ?? 0;
+    final pct1 = double.tryParse(_porcentajeCtrl.text) ?? 0;
+    final totalCuotas = _cuotasTotal;
+
+    // Construir lista de períodos
+    List<PeriodoFijoModel> periodos = [];
+
+    if (monto1 > 0 && hasta1 > 0) {
+      periodos.add(PeriodoFijoModel(
+        contratoId: 0,
+        cuotaDesde: 1,
+        cuotaHasta: hasta1,
+        monto: monto1,
+        porcentaje: pct1,
+      ));
+    }
+
+    // Si hay porcentaje en el primer período y aún quedan cuotas, agregar fila extra
+    if (pct1 > 0 && hasta1 < totalCuotas && monto1 > 0) {
+      if (_periodosExtra.isEmpty) {
+        final nuevoMonto = (monto1 * (1 + pct1 / 100));
+        _periodosExtra.add(_PeriodoRow(
+          montoCtrl: TextEditingController(
+              text: nuevoMonto.toStringAsFixed(0)),
+          hastaCtrl: TextEditingController(
+              text: totalCuotas.toString()),
+          porcentajeCtrl: TextEditingController(text: ''),
+          cuotaDesde: hasta1 + 1,
+        ));
+      }
+    }
+
+    // Procesar filas extra
+    double montoAnterior = monto1;
+    int cuotaAnteriorHasta = hasta1;
+
+    for (int i = 0; i < _periodosExtra.length; i++) {
+      final row = _periodosExtra[i];
+      row.cuotaDesde = cuotaAnteriorHasta + 1;
+
+      final montoRow = double.tryParse(row.montoCtrl.text) ?? 0;
+      final hastaRow = int.tryParse(row.hastaCtrl.text) ?? 0;
+      final pctRow = double.tryParse(row.porcentajeCtrl.text) ?? 0;
+
+      if (montoRow > 0 && hastaRow > 0) {
+        periodos.add(PeriodoFijoModel(
+          contratoId: 0,
+          cuotaDesde: row.cuotaDesde,
+          cuotaHasta: hastaRow,
+          monto: montoRow,
+          porcentaje: pctRow,
+        ));
+      }
+
+      // Si hay % y quedan cuotas, agregar siguiente fila
+      if (pctRow > 0 && hastaRow < totalCuotas && montoRow > 0) {
+        if (i == _periodosExtra.length - 1) {
+          final nuevoMonto = (montoRow * (1 + pctRow / 100));
+          _periodosExtra.add(_PeriodoRow(
+            montoCtrl: TextEditingController(
+                text: nuevoMonto.toStringAsFixed(0)),
+            hastaCtrl: TextEditingController(
+                text: totalCuotas.toString()),
+            porcentajeCtrl: TextEditingController(text: ''),
+            cuotaDesde: hastaRow + 1,
+          ));
+        }
+      }
+
+      montoAnterior = montoRow;
+      cuotaAnteriorHasta = hastaRow;
+    }
+
+    _periodosFijos = periodos;
+  }
+
+  /// Elimina una fila extra de período
+  void _eliminarPeriodoExtra(int index) {
+    // Eliminar esta fila y todas las que siguen
+    for (int i = _periodosExtra.length - 1; i >= index; i--) {
+      _periodosExtra[i].montoCtrl.dispose();
+      _periodosExtra[i].hastaCtrl.dispose();
+      _periodosExtra[i].porcentajeCtrl.dispose();
+      _periodosExtra.removeAt(i);
+    }
+    setState(() => _recalcularPeriodos());
+  }
+
+  /// Agrega manualmente un nuevo período calculando desde el anterior
+  void _agregarPeriodoManual() {
+    int cuotaDesde;
+    int duracion; // misma duración que el período anterior
+    double montoBase;
+    double pctAnterior;
+
+    if (_periodosExtra.isEmpty) {
+      var hasta = int.tryParse(_hastaCuotaCtrl.text) ?? 0;
+      if (hasta <= 0) {
+        hasta = 12;
+        _hastaCuotaCtrl.text = '12';
+      }
+      duracion = hasta; // período 1: del 1 al 12 = 12 meses
+      montoBase = double.tryParse(_alquilerCtrl.text) ?? 0;
+      pctAnterior = double.tryParse(_porcentajeCtrl.text) ?? 0;
+      cuotaDesde = hasta + 1;
+    } else {
+      final last = _periodosExtra.last;
+      var hasta = int.tryParse(last.hastaCtrl.text) ?? 0;
+      if (hasta <= 0) {
+        hasta = last.cuotaDesde + 11;
+        last.hastaCtrl.text = hasta.toString();
+      }
+      duracion = hasta - last.cuotaDesde + 1;
+      montoBase = double.tryParse(last.montoCtrl.text) ?? 0;
+      pctAnterior = double.tryParse(last.porcentajeCtrl.text) ?? 0;
+      cuotaDesde = hasta + 1;
+    }
+
+    final nuevoHasta = cuotaDesde + duracion - 1;
+    final nuevoMonto = pctAnterior > 0
+        ? montoBase * (1 + pctAnterior / 100)
+        : montoBase;
+
+    setState(() {
+      _periodosExtra.add(_PeriodoRow(
+        montoCtrl: TextEditingController(
+            text: nuevoMonto.toStringAsFixed(0)),
+        hastaCtrl: TextEditingController(
+            text: nuevoHasta.toString()),
+        porcentajeCtrl: TextEditingController(text: ''),
+        cuotaDesde: cuotaDesde,
+      ));
+      _recalcularPeriodos();
+    });
   }
 
   // ── Helpers de formato ────────────────────────────────────
@@ -530,81 +697,81 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
   }
 
   Widget _filaPropietario() {
-    // Propietario derivado de la propiedad seleccionada
-    if (_propiedadSel?.propietarioId != null) {
-      final p = _propietariosRaw
-          .where((m) => m['id'] == _propiedadSel!.propietarioId)
-          .firstOrNull;
-      final nombre = p?['nombre'] as String? ??
-          'ID: ${_propiedadSel!.propietarioId}';
-      return Row(
-        children: [
-          const Icon(Icons.person_pin_outlined,
-              size: 14, color: Color(0xFF2E7D32)),
-          const SizedBox(width: 4),
-          Text('Propietario: $nombre',
-              style: const TextStyle(
-                  fontSize: 11, color: Color(0xFF2E7D32))),
-        ],
-      );
+    // Auto-derivar propietario de propiedad/inquilino SOLO la primera vez
+    if (!_propietarioInicializado && _propietarioManualId == null) {
+      final propIdDerivado = _propiedadSel?.propietarioId
+          ?? _inquilinoSel?.propietarioId;
+      if (propIdDerivado != null) {
+        _propietarioManualId = propIdDerivado;
+        _propietarioInicializado = true;
+      }
     }
 
-    // Propietario derivado del inquilino seleccionado
-    if (_inquilinoSel?.propietarioId != null) {
-      final p = _propietariosRaw
-          .where((m) => m['id'] == _inquilinoSel!.propietarioId)
-          .firstOrNull;
-      final nombre = p?['nombre'] as String? ??
-          'ID: ${_inquilinoSel!.propietarioId}';
-      return Row(
-        children: [
-          const Icon(Icons.person_pin_outlined,
-              size: 14, color: Color(0xFF2E7D32)),
-          const SizedBox(width: 4),
-          Text('Propietario: $nombre',
-              style: const TextStyle(
-                  fontSize: 11, color: Color(0xFF2E7D32))),
-        ],
-      );
+    // Nombre actual para info
+    String? nombreActual;
+    if (_propietarioManualId != null) {
+      for (final p in _propietariosRaw) {
+        if (p['id'] == _propietarioManualId) {
+          nombreActual = p['nombre'] as String?;
+          break;
+        }
+      }
     }
 
-    // Sin propietario derivado → botón Nuevo + dropdown (mismo patrón que Propiedad)
-    return Row(
+    // Siempre mostrar dropdown editable
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        OutlinedButton.icon(
-          style: OutlinedButton.styleFrom(
-            foregroundColor: _magenta,
-            side: const BorderSide(color: _magenta),
-          ),
-          onPressed: _abrirPropietarioDialog,
-          icon: const Icon(Icons.person_add_outlined, size: 16),
-          label: const Text('Nuevo Propietario'),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: DropdownButton<int?>(
-            isExpanded: true,
-            value: _propietarioManualId,
-            hint: const Text('O Elegir...'),
-            onChanged: (v) =>
-                setState(() => _propietarioManualId = v),
-            items: [
-              const DropdownMenuItem<int?>(
-                value: null,
-                child: Text('O Elegir...'),
+        Row(
+          children: [
+            OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _magenta,
+                side: const BorderSide(color: _magenta),
               ),
-              ..._propietariosRaw.map(
-                (p) => DropdownMenuItem<int?>(
-                  value: p['id'] as int?,
-                  child: Text(
-                    p['nombre'] as String? ?? '',
-                    overflow: TextOverflow.ellipsis,
+              onPressed: _abrirPropietarioDialog,
+              icon: const Icon(Icons.person_add_outlined, size: 16),
+              label: const Text('Nuevo Propietario'),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: DropdownButton<int?>(
+                isExpanded: true,
+                value: _propietarioManualId,
+                hint: const Text('Elegir propietario...'),
+                onChanged: (v) {
+                  setState(() {
+                    _propietarioManualId = v;
+                    _propietarioInicializado = true;
+                  });
+                },
+                items: [
+                  const DropdownMenuItem<int?>(
+                    value: null,
+                    child: Text('Elegir propietario...'),
                   ),
-                ),
+                  ..._propietariosRaw.map(
+                    (p) => DropdownMenuItem<int?>(
+                      value: p['id'] as int?,
+                      child: Text(
+                        p['nombre'] as String? ?? '',
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+          ],
         ),
+        if (nombreActual != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            '👤 Propietario: $nombreActual',
+            style: const TextStyle(
+                fontSize: 11, color: Color(0xFF1565C0)),
+          ),
+        ],
       ],
     );
   }
@@ -700,7 +867,7 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
               SizedBox(
                 width: 90,
                 child: TextFormField(
-                  initialValue: _cuotasTotal.toString(),
+                  controller: _cuotasTotalCtrl,
                   keyboardType: TextInputType.number,
                   inputFormatters: [
                     FilteringTextInputFormatter.digitsOnly
@@ -734,80 +901,326 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          // Botón períodos fijos
-          Row(
-            children: [
-              OutlinedButton.icon(
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: _magenta,
-                  side: const BorderSide(color: _magenta),
+          const SizedBox(height: 16),
+          // ── Períodos fijos (tabla inline) ──
+          Container(
+            decoration: BoxDecoration(
+              border: Border.all(color: const Color(0xFFE0E0E0)),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              children: [
+                // Header
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 8),
+                  decoration: const BoxDecoration(
+                    color: Color(0xFFF5F5F5),
+                    borderRadius: BorderRadius.vertical(
+                        top: Radius.circular(7)),
+                  ),
+                  child: Row(
+                    children: const [
+                      Icon(Icons.view_timeline_outlined,
+                          size: 16, color: Color(0xFFC2185B)),
+                      SizedBox(width: 6),
+                      Text('Períodos fijos',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                              color: Color(0xFFC2185B))),
+                    ],
+                  ),
                 ),
-                onPressed: _abrirPeriodosFijosDialog,
-                icon: const Text('📅', style: TextStyle(fontSize: 14)),
-                label: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Text('Períodos fijos'),
-                    if (_periodosFijos.isNotEmpty) ...[
-                      const SizedBox(width: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: _magenta,
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Text(
-                          '${_periodosFijos.length}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
+                // Encabezados columnas
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                  child: Row(
+                    children: const [
+                      SizedBox(
+                          width: 60,
+                          child: Text('Cuotas',
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF757575)))),
+                      SizedBox(width: 6),
+                      Expanded(
+                          child: Text('Monto \$',
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF757575)))),
+                      SizedBox(width: 6),
+                      SizedBox(
+                          width: 75,
+                          child: Text('Hasta mes',
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF757575)))),
+                      SizedBox(width: 6),
+                      SizedBox(
+                          width: 75,
+                          child: Text('% Aumento',
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF757575)))),
+                      SizedBox(width: 32),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                // Período 1 (principal)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+                  child: Row(
+                    children: [
+                      SizedBox(
+                        width: 60,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 6, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFC2185B)
+                                .withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(4),
                           ),
+                          child: const Text('1 -',
+                              style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFFC2185B))),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: TextField(
+                          controller: _alquilerCtrl,
+                          keyboardType:
+                              const TextInputType.numberWithOptions(
+                                  decimal: true),
+                          inputFormatters: [
+                            FilteringTextInputFormatter.allow(
+                                RegExp(r'^\d*\.?\d*'))
+                          ],
+                          decoration: const InputDecoration(
+                            isDense: true,
+                            hintText: '50000',
+                            contentPadding: EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 8),
+                            border: OutlineInputBorder(),
+                          ),
+                          style: const TextStyle(fontSize: 13),
+                          onChanged: (_) =>
+                              setState(() => _recalcularPeriodos()),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      SizedBox(
+                        width: 75,
+                        child: TextField(
+                          controller: _hastaCuotaCtrl,
+                          keyboardType: TextInputType.number,
+                          inputFormatters: [
+                            FilteringTextInputFormatter.digitsOnly
+                          ],
+                          decoration: const InputDecoration(
+                            isDense: true,
+                            hintText: '12',
+                            contentPadding: EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 8),
+                            border: OutlineInputBorder(),
+                          ),
+                          style: const TextStyle(fontSize: 13),
+                          onChanged: (_) =>
+                              setState(() => _recalcularPeriodos()),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      SizedBox(
+                        width: 75,
+                        child: TextField(
+                          controller: _porcentajeCtrl,
+                          keyboardType:
+                              const TextInputType.numberWithOptions(
+                                  decimal: true),
+                          inputFormatters: [
+                            FilteringTextInputFormatter.allow(
+                                RegExp(r'^\d*\.?\d*'))
+                          ],
+                          decoration: const InputDecoration(
+                            isDense: true,
+                            hintText: '%',
+                            contentPadding: EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 8),
+                            border: OutlineInputBorder(),
+                            suffixText: '%',
+                            suffixStyle: TextStyle(fontSize: 11),
+                          ),
+                          style: const TextStyle(fontSize: 13),
+                          onChanged: (_) =>
+                              setState(() => _recalcularPeriodos()),
+                        ),
+                      ),
+                      const SizedBox(width: 32), // espacio para el icono de borrar
+                    ],
+                  ),
+                ),
+                // Filas extra de períodos
+                ..._periodosExtra.asMap().entries.map((entry) {
+                  final i = entry.key;
+                  final row = entry.value;
+                  return Column(
+                    children: [
+                      const Divider(height: 1),
+                      Padding(
+                        padding:
+                            const EdgeInsets.fromLTRB(12, 6, 4, 6),
+                        child: Row(
+                          children: [
+                            SizedBox(
+                              width: 60,
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFC2185B)
+                                      .withOpacity(0.1),
+                                  borderRadius:
+                                      BorderRadius.circular(4),
+                                ),
+                                child: Text(
+                                    '${row.cuotaDesde} -',
+                                    style: const TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                        color: Color(0xFFC2185B))),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: TextField(
+                                controller: row.montoCtrl,
+                                keyboardType: const TextInputType
+                                    .numberWithOptions(decimal: true),
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.allow(
+                                      RegExp(r'^\d*\.?\d*'))
+                                ],
+                                decoration: const InputDecoration(
+                                  isDense: true,
+                                  contentPadding:
+                                      EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 8),
+                                  border: OutlineInputBorder(),
+                                ),
+                                style: const TextStyle(fontSize: 13),
+                                onChanged: (_) => setState(
+                                    () => _recalcularPeriodos()),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            SizedBox(
+                              width: 75,
+                              child: TextField(
+                                controller: row.hastaCtrl,
+                                keyboardType: TextInputType.number,
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly
+                                ],
+                                decoration: const InputDecoration(
+                                  isDense: true,
+                                  contentPadding:
+                                      EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 8),
+                                  border: OutlineInputBorder(),
+                                ),
+                                style: const TextStyle(fontSize: 13),
+                                onChanged: (_) => setState(
+                                    () => _recalcularPeriodos()),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            SizedBox(
+                              width: 75,
+                              child: TextField(
+                                controller: row.porcentajeCtrl,
+                                keyboardType: const TextInputType
+                                    .numberWithOptions(decimal: true),
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.allow(
+                                      RegExp(r'^\d*\.?\d*'))
+                                ],
+                                decoration: const InputDecoration(
+                                  isDense: true,
+                                  hintText: '%',
+                                  contentPadding:
+                                      EdgeInsets.symmetric(
+                                          horizontal: 8, vertical: 8),
+                                  border: OutlineInputBorder(),
+                                  suffixText: '%',
+                                  suffixStyle: TextStyle(fontSize: 11),
+                                ),
+                                style: const TextStyle(fontSize: 13),
+                                onChanged: (_) => setState(
+                                    () => _recalcularPeriodos()),
+                              ),
+                            ),
+                            SizedBox(
+                              width: 32,
+                              child: IconButton(
+                                icon: const Icon(
+                                    Icons.remove_circle_outline,
+                                    color: Color(0xFFC62828),
+                                    size: 18),
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
+                                onPressed: () =>
+                                    _eliminarPeriodoExtra(i),
+                                tooltip: 'Eliminar período',
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          // Fila: alquiler, hasta cuota, extras
-          Row(
-            children: [
-              Expanded(
-                child: TextFormField(
-                  controller: _alquilerCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true),
-                  inputFormatters: [
-                    FilteringTextInputFormatter.allow(
-                        RegExp(r'^\d*\.?\d*'))
-                  ],
-                  decoration: const InputDecoration(
-                    labelText: 'Alquiler 1er. período \$',
-                    isDense: true,
+                  );
+                }),
+                // Botón agregar período + resumen
+                const Divider(height: 1),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 6),
+                  child: Row(
+                    children: [
+                      TextButton.icon(
+                        onPressed: _agregarPeriodoManual,
+                        icon: const Icon(Icons.add_circle_outline,
+                            size: 16),
+                        label: const Text('Agregar período',
+                            style: TextStyle(fontSize: 12)),
+                        style: TextButton.styleFrom(
+                          foregroundColor: const Color(0xFFC2185B),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                        ),
+                      ),
+                      const Spacer(),
+                      if (_periodosFijos.isNotEmpty)
+                        Text(
+                          '${_periodosFijos.length} período${_periodosFijos.length > 1 ? 's' : ''}',
+                          style: const TextStyle(
+                              fontSize: 11,
+                              color: Color(0xFF757575),
+                              fontStyle: FontStyle.italic),
+                        ),
+                    ],
                   ),
                 ),
-              ),
-              const SizedBox(width: 8),
-              SizedBox(
-                width: 90,
-                child: TextFormField(
-                  controller: _hastaCuotaCtrl,
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [
-                    FilteringTextInputFormatter.digitsOnly
-                  ],
-                  decoration: const InputDecoration(
-                    labelText: 'Hasta cuota',
-                    isDense: true,
-                  ),
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ],
       ),
@@ -1261,12 +1674,9 @@ class _PropiedadDialogState extends State<PropiedadDialog> {
       if (mounted) Navigator.pop(context, creado);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al guardar: $e'),
-            backgroundColor: const Color(0xFFC62828),
-          ),
-        );
+        mostrarNotificacion(context,
+            texto: 'Error al guardar: $e',
+            color: const Color(0xFFC62828));
       }
     } finally {
       if (mounted) setState(() => _guardando = false);
@@ -1405,6 +1815,8 @@ class _InquilinoDialogState extends State<InquilinoDialog> {
   // Propietario — se usa el que viene o se elige del dropdown
   int? _propietarioSelId;
   List<Map<String, dynamic>> _propietarios = [];
+  bool _cargandoPropietarios = true;
+  String? _errorPropietarios;
 
   @override
   void initState() {
@@ -1428,8 +1840,19 @@ class _InquilinoDialogState extends State<InquilinoDialog> {
   }
 
   Future<void> _cargarPropietarios() async {
-    final data = await _db.obtenerPropietarios();
-    if (mounted) setState(() => _propietarios = data);
+    if (mounted) setState(() { _cargandoPropietarios = true; _errorPropietarios = null; });
+    try {
+      final data = await _db.obtenerPropietarios();
+      if (mounted) setState(() {
+        _propietarios = data;
+        _cargandoPropietarios = false;
+      });
+    } catch (e) {
+      if (mounted) setState(() {
+        _cargandoPropietarios = false;
+        _errorPropietarios = 'Error al cargar propietarios: $e';
+      });
+    }
   }
 
   @override
@@ -1449,12 +1872,9 @@ class _InquilinoDialogState extends State<InquilinoDialog> {
   Future<void> _guardar() async {
     if (!_formKey.currentState!.validate()) return;
     if (_propietarioSelId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Seleccione un propietario'),
-          backgroundColor: Color(0xFFC62828),
-        ),
-      );
+      mostrarNotificacion(context,
+          texto: 'Seleccione un propietario',
+          color: const Color(0xFFC62828));
       return;
     }
     setState(() => _guardando = true);
@@ -1482,12 +1902,9 @@ class _InquilinoDialogState extends State<InquilinoDialog> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al guardar: $e'),
-            backgroundColor: const Color(0xFFC62828),
-          ),
-        );
+        mostrarNotificacion(context,
+            texto: 'Error al guardar: $e',
+            color: const Color(0xFFC62828));
       }
     } finally {
       if (mounted) setState(() => _guardando = false);
@@ -1508,27 +1925,81 @@ class _InquilinoDialogState extends State<InquilinoDialog> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 // Dropdown propietario
-                DropdownButtonFormField<int>(
-                  value: _propietarioSelId,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Propietario *',
-                    isDense: true,
-                    prefixIcon: Icon(Icons.person_outline, size: 18),
-                  ),
-                  items: _propietarios.map((p) {
-                    return DropdownMenuItem<int>(
-                      value: p['id'] as int,
-                      child: Text(
-                        p['nombre'] as String? ?? 'Sin nombre',
-                        overflow: TextOverflow.ellipsis,
+                if (_cargandoPropietarios)
+                  InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Propietario *',
+                      isDense: true,
+                      prefixIcon: Icon(Icons.person_outline, size: 18),
+                    ),
+                    child: const SizedBox(
+                      height: 20,
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 14,
+                            height: 14,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(width: 10),
+                          Text('Cargando propietarios...',
+                              style: TextStyle(
+                                  fontSize: 13, color: Color(0xFF9E9E9E))),
+                        ],
                       ),
-                    );
-                  }).toList(),
-                  onChanged: (v) => setState(() => _propietarioSelId = v),
-                  validator: (v) =>
-                      v == null ? 'Seleccione un propietario' : null,
-                ),
+                    ),
+                  )
+                else if (_errorPropietarios != null)
+                  InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Propietario *',
+                      isDense: true,
+                      prefixIcon: Icon(Icons.person_outline, size: 18),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.error_outline,
+                            size: 16, color: Color(0xFFC62828)),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text('No se pudo cargar',
+                              style: const TextStyle(
+                                  fontSize: 12, color: Color(0xFFC62828))),
+                        ),
+                        TextButton(
+                          onPressed: _cargarPropietarios,
+                          style: TextButton.styleFrom(
+                              padding: EdgeInsets.zero,
+                              minimumSize: const Size(60, 24),
+                              textStyle: const TextStyle(fontSize: 12)),
+                          child: const Text('Reintentar'),
+                        ),
+                      ],
+                    ),
+                  )
+                else
+                  DropdownButtonFormField<int>(
+                    value: _propietarioSelId,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Propietario *',
+                      isDense: true,
+                      prefixIcon: Icon(Icons.person_outline, size: 18),
+                    ),
+                    hint: const Text('Seleccionar propietario'),
+                    items: _propietarios.map((p) {
+                      return DropdownMenuItem<int>(
+                        value: p['id'] as int,
+                        child: Text(
+                          p['nombre'] as String? ?? 'Sin nombre',
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      );
+                    }).toList(),
+                    onChanged: (v) => setState(() => _propietarioSelId = v),
+                    validator: (v) =>
+                        v == null ? 'Seleccione un propietario' : null,
+                  ),
                 const SizedBox(height: 10),
                 TextFormField(
                   controller: _nombreCtrl,
@@ -1672,12 +2143,9 @@ class _PropietarioDialogState extends State<PropietarioDialog> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error al guardar: $e'),
-            backgroundColor: const Color(0xFFC62828),
-          ),
-        );
+        mostrarNotificacion(context,
+            texto: 'Error al guardar: $e',
+            color: const Color(0xFFC62828));
       }
     } finally {
       if (mounted) setState(() => _guardando = false);
@@ -1823,212 +2291,17 @@ class _PropietarioDialogState extends State<PropietarioDialog> {
 // DIALOG: PeriodosFijosDialog
 // ════════════════════════════════════════════════════════════
 
-class PeriodosFijosDialog extends StatefulWidget {
-  final List<PeriodoFijoModel> periodosIniciales;
-
-  const PeriodosFijosDialog({
-    super.key,
-    required this.periodosIniciales,
-  });
-
-  @override
-  State<PeriodosFijosDialog> createState() =>
-      _PeriodosFijosDialogState();
-}
-
-class _PeriodosFijosDialogState extends State<PeriodosFijosDialog> {
-  late List<_FilaPeriodo> _filas;
-
-  @override
-  void initState() {
-    super.initState();
-    _filas = widget.periodosIniciales
-        .map((p) => _FilaPeriodo(
-              desdeCtrl: TextEditingController(
-                  text: p.cuotaDesde.toString()),
-              hastaCtrl: TextEditingController(
-                  text: p.cuotaHasta.toString()),
-              montoCtrl: TextEditingController(
-                  text: p.monto.toString()),
-            ))
-        .toList();
-    if (_filas.isEmpty) _agregarFila();
-  }
-
-  @override
-  void dispose() {
-    for (final f in _filas) {
-      f.desdeCtrl.dispose();
-      f.hastaCtrl.dispose();
-      f.montoCtrl.dispose();
-    }
-    super.dispose();
-  }
-
-  void _agregarFila() {
-    setState(() {
-      _filas.add(_FilaPeriodo(
-        desdeCtrl: TextEditingController(),
-        hastaCtrl: TextEditingController(),
-        montoCtrl: TextEditingController(),
-      ));
-    });
-  }
-
-  void _eliminarFila(int index) {
-    _filas[index].desdeCtrl.dispose();
-    _filas[index].hastaCtrl.dispose();
-    _filas[index].montoCtrl.dispose();
-    setState(() => _filas.removeAt(index));
-  }
-
-  void _guardar() {
-    final resultado = _filas.map((f) {
-      return {
-        'desde': int.tryParse(f.desdeCtrl.text) ?? 0,
-        'hasta': int.tryParse(f.hastaCtrl.text) ?? 0,
-        'monto': double.tryParse(f.montoCtrl.text) ?? 0.0,
-      };
-    }).toList();
-    Navigator.pop(context, resultado);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Períodos fijos de alquiler'),
-      content: SizedBox(
-        width: 520,
-        child: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Encabezados
-              Row(
-                children: const [
-                  Expanded(
-                      child: Text('Desde cuota',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12))),
-                  SizedBox(width: 8),
-                  Expanded(
-                      child: Text('Hasta cuota',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12))),
-                  SizedBox(width: 8),
-                  Expanded(
-                      child: Text('Monto',
-                          style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 12))),
-                  SizedBox(width: 36),
-                ],
-              ),
-              const Divider(),
-              // Filas
-              ..._filas.asMap().entries.map((entry) {
-                final i = entry.key;
-                final f = entry.value;
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 8),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: f.desdeCtrl,
-                          keyboardType: TextInputType.number,
-                          inputFormatters: [
-                            FilteringTextInputFormatter.digitsOnly
-                          ],
-                          decoration: const InputDecoration(
-                            isDense: true,
-                            hintText: 'Ej: 1',
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextField(
-                          controller: f.hastaCtrl,
-                          keyboardType: TextInputType.number,
-                          inputFormatters: [
-                            FilteringTextInputFormatter.digitsOnly
-                          ],
-                          decoration: const InputDecoration(
-                            isDense: true,
-                            hintText: 'Ej: 12',
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: TextField(
-                          controller: f.montoCtrl,
-                          keyboardType:
-                              const TextInputType.numberWithOptions(
-                                  decimal: true),
-                          inputFormatters: [
-                            FilteringTextInputFormatter.allow(
-                                RegExp(r'^\d*\.?\d*'))
-                          ],
-                          decoration: const InputDecoration(
-                            isDense: true,
-                            hintText: 'Ej: 50000',
-                          ),
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.delete_outline,
-                            color: Color(0xFFC62828), size: 20),
-                        onPressed: () => _eliminarFila(i),
-                        tooltip: 'Eliminar',
-                      ),
-                    ],
-                  ),
-                );
-              }),
-              const SizedBox(height: 8),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: _agregarFila,
-                  icon: const Icon(Icons.add),
-                  label: const Text('+ Agregar período'),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancelar'),
-        ),
-        ElevatedButton(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: const Color(0xFFC2185B),
-            foregroundColor: Colors.white,
-          ),
-          onPressed: _guardar,
-          child: const Text('Guardar'),
-        ),
-      ],
-    );
-  }
-}
-
-/// Estructura interna para cada fila del diálogo de períodos
-class _FilaPeriodo {
-  final TextEditingController desdeCtrl;
-  final TextEditingController hastaCtrl;
+/// Estructura para cada fila extra de período en la tabla inline
+class _PeriodoRow {
   final TextEditingController montoCtrl;
+  final TextEditingController hastaCtrl;
+  final TextEditingController porcentajeCtrl;
+  int cuotaDesde;
 
-  _FilaPeriodo({
-    required this.desdeCtrl,
-    required this.hastaCtrl,
+  _PeriodoRow({
     required this.montoCtrl,
+    required this.hastaCtrl,
+    required this.porcentajeCtrl,
+    required this.cuotaDesde,
   });
 }

@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../database/database_helper.dart';
+import '../../utils/snackbar_helper.dart';
 
 class GarantesListScreen extends StatefulWidget {
-  const GarantesListScreen({super.key});
+  final String? busquedaInicial;
+  const GarantesListScreen({super.key, this.busquedaInicial});
 
   /// Abre el diálogo de creación de garante desde cualquier contexto.
   static Future<void> mostrarDialogNuevoGarante(BuildContext context) async {
@@ -211,6 +213,227 @@ class GarantesListScreen extends StatefulWidget {
     );
   }
 
+  /// Abre el diálogo de edición de un garante existente desde cualquier contexto.
+  static Future<void> mostrarDialogEditarGarante(
+      BuildContext context, int garanteId) async {
+    const magenta = Color(0xFFC2185B);
+    const gray = Color(0xFF757575);
+    final db = DatabaseHelper();
+
+    final datos = await db.obtenerGarantePorId(garanteId);
+    if (!context.mounted) return;
+    if (datos == null) {
+      mostrarNotificacion(context,
+          texto: 'No se encontró el garante',
+          color: const Color(0xFFC62828));
+      return;
+    }
+
+    final nombreCtrl =
+        TextEditingController(text: datos['nombre'] as String? ?? '');
+    final telefonoCtrl =
+        TextEditingController(text: datos['telefono'] as String? ?? '');
+    final emailCtrl =
+        TextEditingController(text: datos['email'] as String? ?? '');
+    String tipoGarantia =
+        datos['tipo_garantia'] as String? ?? 'recibo_sueldo';
+
+    final contratos = await db.obtenerContratosActivos();
+    int? contratoId = datos['contrato_id'] as int?;
+
+    if (!context.mounted) return;
+
+    final formKey = GlobalKey<FormState>();
+
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setS) => Dialog(
+          insetPadding:
+              const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Form(
+                key: formKey,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Icon(Icons.verified_user,
+                              color: magenta, size: 22),
+                          const SizedBox(width: 8),
+                          const Text(
+                            'Editar garante',
+                            style: TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.bold,
+                                color: magenta),
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            icon: const Icon(Icons.close, size: 20),
+                            onPressed: () => Navigator.pop(ctx),
+                            padding: EdgeInsets.zero,
+                            constraints: const BoxConstraints(),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      TextFormField(
+                        controller: nombreCtrl,
+                        decoration: const InputDecoration(
+                          labelText: 'Nombre *',
+                          isDense: true,
+                          border: OutlineInputBorder(),
+                        ),
+                        validator: (v) => (v == null || v.trim().isEmpty)
+                            ? 'Requerido'
+                            : null,
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextFormField(
+                              controller: telefonoCtrl,
+                              decoration: const InputDecoration(
+                                labelText: 'Teléfono',
+                                isDense: true,
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: TextFormField(
+                              controller: emailCtrl,
+                              decoration: const InputDecoration(
+                                labelText: 'Email',
+                                isDense: true,
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      DropdownButtonFormField<int?>(
+                        value: contratoId,
+                        decoration: const InputDecoration(
+                          labelText: 'Contrato asociado',
+                          isDense: true,
+                          border: OutlineInputBorder(),
+                        ),
+                        items: [
+                          const DropdownMenuItem<int?>(
+                            value: null,
+                            child: Text('— Sin asignar —',
+                                style: TextStyle(color: Colors.grey)),
+                          ),
+                          ...contratos.map((c) {
+                            final dir = c['propiedad_direccion'] as String? ??
+                                'Sin propiedad';
+                            final inq = c['inquilino_nombre'] as String? ?? '';
+                            return DropdownMenuItem<int?>(
+                              value: c['id'] as int,
+                              child: Text(
+                                '$dir${inq.isNotEmpty ? ' — $inq' : ''}',
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(fontSize: 13),
+                              ),
+                            );
+                          }),
+                        ],
+                        onChanged: (v) => setS(() => contratoId = v),
+                        validator: (v) =>
+                            v == null ? 'Seleccioná un contrato' : null,
+                      ),
+                      const SizedBox(height: 12),
+                      const Text('Tipo de garantía:',
+                          style: TextStyle(fontSize: 12, color: gray)),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: RadioListTile<String>(
+                              title: const Text('Recibo de sueldo',
+                                  style: TextStyle(fontSize: 12)),
+                              value: 'recibo_sueldo',
+                              groupValue: tipoGarantia,
+                              onChanged: (v) =>
+                                  setS(() => tipoGarantia = v!),
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          ),
+                          Expanded(
+                            child: RadioListTile<String>(
+                              title: const Text('Garantía propietaria',
+                                  style: TextStyle(fontSize: 12)),
+                              value: 'garante_propietario',
+                              groupValue: tipoGarantia,
+                              onChanged: (v) =>
+                                  setS(() => tipoGarantia = v!),
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              visualDensity: VisualDensity.compact,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            child: const Text('Cancelar'),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton.icon(
+                            icon: const Icon(Icons.save, size: 16),
+                            label: const Text('Guardar'),
+                            style: FilledButton.styleFrom(
+                                backgroundColor: magenta),
+                            onPressed: () async {
+                              if (!formKey.currentState!.validate()) return;
+                              final dbI = await db.database;
+                              final data = {
+                                'contrato_id': contratoId,
+                                'nombre': nombreCtrl.text.trim(),
+                                'telefono': telefonoCtrl.text.trim().isEmpty
+                                    ? null
+                                    : telefonoCtrl.text.trim(),
+                                'email': emailCtrl.text.trim().isEmpty
+                                    ? null
+                                    : emailCtrl.text.trim(),
+                                'tipo_garantia': tipoGarantia,
+                              };
+                              await dbI.update('garantes', data,
+                                  where: 'id = ?', whereArgs: [garanteId]);
+                              if (ctx.mounted) Navigator.pop(ctx);
+                            },
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   State<GarantesListScreen> createState() => _GarantesListScreenState();
 }
@@ -230,6 +453,9 @@ class _GarantesListScreenState extends State<GarantesListScreen> {
   @override
   void initState() {
     super.initState();
+    if (widget.busquedaInicial != null && widget.busquedaInicial!.isNotEmpty) {
+      _busquedaCtrl.text = widget.busquedaInicial!;
+    }
     _cargar();
     _busquedaCtrl.addListener(_filtrar);
     _autoRefresh = Timer.periodic(
@@ -269,9 +495,9 @@ class _GarantesListScreenState extends State<GarantesListScreen> {
     } catch (e) {
       setState(() => _cargando = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al cargar garantes: $e')),
-        );
+        mostrarNotificacion(context,
+            texto: 'Error al cargar garantes: $e',
+            color: const Color(0xFFC62828));
       }
     }
   }
@@ -549,13 +775,9 @@ class _GarantesListScreenState extends State<GarantesListScreen> {
       appBar: AppBar(
         title: const Text('Garantes',
             style: TextStyle(fontWeight: FontWeight.bold)),
-        backgroundColor: Colors.white,
-        foregroundColor: _dark,
+        backgroundColor: _magenta,
+        foregroundColor: Colors.white,
         elevation: 0,
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(1),
-          child: Container(height: 1, color: const Color(0xFFE0E0E0)),
-        ),
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _nuevo,
@@ -601,8 +823,14 @@ class _GarantesListScreenState extends State<GarantesListScreen> {
                           ],
                         ),
                       )
-                    : ListView.builder(
+                    : GridView.builder(
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 80),
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 10,
+                          mainAxisSpacing: 0,
+                          childAspectRatio: 5.5 / (MediaQuery.textScalerOf(context).scale(1.0).clamp(1.0, 1.3)),
+                        ),
                         itemCount: _filtrados.length,
                         itemBuilder: (_, i) => _tarjeta(_filtrados[i]),
                       ),

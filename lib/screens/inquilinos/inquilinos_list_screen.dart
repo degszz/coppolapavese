@@ -2,10 +2,13 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../database/database_helper.dart';
 import '../../models/inquilino_model.dart';
+import '../../utils/snackbar_helper.dart';
 import '../contratos/contrato_form_screen.dart'; // InquilinoDialog
+import '../recibos/recibo_form_screen.dart';
 
 class InquilinosListScreen extends StatefulWidget {
-  const InquilinosListScreen({super.key});
+  final String? busquedaInicial;
+  const InquilinosListScreen({super.key, this.busquedaInicial});
 
   @override
   State<InquilinosListScreen> createState() => _InquilinosListScreenState();
@@ -26,6 +29,9 @@ class _InquilinosListScreenState extends State<InquilinosListScreen> {
   @override
   void initState() {
     super.initState();
+    if (widget.busquedaInicial != null && widget.busquedaInicial!.isNotEmpty) {
+      _busquedaCtrl.text = widget.busquedaInicial!;
+    }
     _cargar();
     _busquedaCtrl.addListener(_filtrar);
     _autoRefresh = Timer.periodic(
@@ -65,9 +71,9 @@ class _InquilinosListScreenState extends State<InquilinosListScreen> {
     } catch (e) {
       setState(() => _cargando = false);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al cargar inquilinos: $e')),
-        );
+        mostrarNotificacion(context,
+            texto: 'Error al cargar inquilinos: $e',
+            color: const Color(0xFFC62828));
       }
     }
   }
@@ -140,7 +146,11 @@ class _InquilinosListScreenState extends State<InquilinosListScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Inquilinos'),
+        title: const Text('Inquilinos',
+            style: TextStyle(fontWeight: FontWeight.bold)),
+        backgroundColor: _magenta,
+        foregroundColor: Colors.white,
+        elevation: 0,
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -159,8 +169,14 @@ class _InquilinosListScreenState extends State<InquilinosListScreen> {
                     ? _estadoVacio()
                     : RefreshIndicator(
                         onRefresh: _cargar,
-                        child: ListView.builder(
+                        child: GridView.builder(
                           padding: const EdgeInsets.fromLTRB(16, 8, 16, 100),
+                          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 2,
+                            crossAxisSpacing: 10,
+                            mainAxisSpacing: 0,
+                            childAspectRatio: 5.5 / (MediaQuery.textScalerOf(context).scale(1.0).clamp(1.0, 1.3)),
+                          ),
                           itemCount: _filtrados.length,
                           itemBuilder: (_, i) =>
                               _tarjetaInquilino(_filtrados[i]),
@@ -171,6 +187,8 @@ class _InquilinosListScreenState extends State<InquilinosListScreen> {
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: _nuevo,
+        backgroundColor: _magenta,
+        foregroundColor: Colors.white,
         icon: const Icon(Icons.person_add),
         label: const Text('Nuevo Inquilino'),
       ),
@@ -179,19 +197,16 @@ class _InquilinosListScreenState extends State<InquilinosListScreen> {
 
   // ── Barra de búsqueda ──────────────────────────────────
   Widget _barBusqueda() {
-    return Container(
-      color: _magenta,
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
       child: TextField(
         controller: _busquedaCtrl,
-        style: const TextStyle(color: Colors.white),
         decoration: InputDecoration(
           hintText: 'Buscar inquilino, propietario o dirección...',
-          hintStyle: const TextStyle(color: Colors.white54),
-          prefixIcon: const Icon(Icons.search, color: Colors.white70),
+          prefixIcon: const Icon(Icons.search, size: 20),
           suffixIcon: _busquedaCtrl.text.isNotEmpty
               ? IconButton(
-                  icon: const Icon(Icons.clear, color: Colors.white70),
+                  icon: const Icon(Icons.clear, size: 18),
                   onPressed: () {
                     _busquedaCtrl.clear();
                     _filtrar();
@@ -199,10 +214,15 @@ class _InquilinosListScreenState extends State<InquilinosListScreen> {
                 )
               : null,
           filled: true,
-          fillColor: Colors.white.withOpacity(0.15),
+          fillColor: Colors.white,
+          isDense: true,
           border: OutlineInputBorder(
             borderRadius: BorderRadius.circular(10),
-            borderSide: BorderSide.none,
+            borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
           ),
           contentPadding:
               const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -236,166 +256,208 @@ class _InquilinosListScreenState extends State<InquilinosListScreen> {
             : '';
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // ── Encabezado ─────────────────────────────
-            Row(
-              children: [
-                CircleAvatar(
-                  radius: 22,
-                  backgroundColor: _magenta.withOpacity(0.12),
-                  child: Text(
-                    nombreCompleto.isNotEmpty
-                        ? nombreCompleto[0].toUpperCase()
-                        : '?',
-                    style: const TextStyle(
-                      color: _magenta,
-                      fontWeight: FontWeight.bold,
-                      fontSize: 18,
+      margin: const EdgeInsets.only(bottom: 8),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => _editar(datos),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── Encabezado ─────────────────────────────
+              Row(
+                children: [
+                  CircleAvatar(
+                    radius: 18,
+                    backgroundColor: _magenta.withOpacity(0.12),
+                    child: Text(
+                      nombreCompleto.isNotEmpty
+                          ? nombreCompleto[0].toUpperCase()
+                          : '?',
+                      style: const TextStyle(
+                        color: _magenta,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15,
+                      ),
                     ),
                   ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        nombreCompleto.isEmpty ? 'Sin nombre' : nombreCompleto,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15,
-                          color: _dark,
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          nombreCompleto.isEmpty ? 'Sin nombre' : nombreCompleto,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                            color: _dark,
+                          ),
+                          overflow: TextOverflow.ellipsis,
                         ),
-                      ),
-                      Text(
-                        'Propietario: $propietario',
-                        style: const TextStyle(fontSize: 12, color: _gray),
-                      ),
-                    ],
-                  ),
-                ),
-                // Badge contrato
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: tieneContrato
-                        ? const Color(0xFF2E7D32).withOpacity(0.1)
-                        : Colors.orange.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: tieneContrato
-                          ? const Color(0xFF2E7D32).withOpacity(0.4)
-                          : Colors.orange.withOpacity(0.4),
+                        Text(
+                          'Propietario: $propietario',
+                          style: const TextStyle(fontSize: 11, color: _gray),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ],
                     ),
                   ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        tieneContrato ? Icons.check_circle : Icons.info_outline,
-                        size: 12,
+                  // Badge contrato
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: tieneContrato
+                          ? const Color(0xFF2E7D32).withOpacity(0.1)
+                          : Colors.orange.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(
                         color: tieneContrato
-                            ? const Color(0xFF2E7D32)
-                            : Colors.orange,
+                            ? const Color(0xFF2E7D32).withOpacity(0.4)
+                            : Colors.orange.withOpacity(0.4),
                       ),
-                      const SizedBox(width: 4),
-                      Text(
-                        tieneContrato ? 'Con contrato' : 'Sin contrato',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.bold,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          tieneContrato ? Icons.check_circle : Icons.info_outline,
+                          size: 11,
                           color: tieneContrato
                               ? const Color(0xFF2E7D32)
                               : Colors.orange,
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 3),
+                        Text(
+                          tieneContrato ? 'Contrato' : 'Sin contrato',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: tieneContrato
+                                ? const Color(0xFF2E7D32)
+                                : Colors.orange,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
+                ],
+              ),
+              const SizedBox(height: 6),
 
-            // ── Propiedad ──────────────────────────────
-            Row(
-              children: [
-                const Icon(Icons.location_on_outlined,
-                    size: 14, color: Color(0xFF9E9E9E)),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    localidad.isNotEmpty
-                        ? '$direccion, $localidad'
-                        : direccion,
-                    style: const TextStyle(fontSize: 12, color: _gray),
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                ),
-              ],
-            ),
-            if (contacto.isNotEmpty || email.isNotEmpty) ...[
-              const SizedBox(height: 4),
+              // ── Propiedad + contacto ───────────────────
               Row(
                 children: [
-                  if (contacto.isNotEmpty) ...[
-                    const Icon(Icons.phone_outlined,
-                        size: 14, color: Color(0xFF9E9E9E)),
-                    const SizedBox(width: 4),
-                    Text(contacto,
-                        style: const TextStyle(fontSize: 12, color: _gray)),
-                    const SizedBox(width: 12),
-                  ],
-                  if (email.isNotEmpty) ...[
-                    const Icon(Icons.email_outlined,
-                        size: 14, color: Color(0xFF9E9E9E)),
-                    const SizedBox(width: 4),
-                    Expanded(
-                      child: Text(email,
-                          style: const TextStyle(fontSize: 12, color: _gray),
-                          overflow: TextOverflow.ellipsis),
+                  const Icon(Icons.location_on_outlined,
+                      size: 13, color: Color(0xFF9E9E9E)),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      localidad.isNotEmpty
+                          ? '$direccion, $localidad'
+                          : direccion,
+                      style: const TextStyle(fontSize: 11, color: _gray),
+                      overflow: TextOverflow.ellipsis,
                     ),
+                  ),
+                  if (contacto.isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    const Icon(Icons.phone_outlined,
+                        size: 13, color: Color(0xFF9E9E9E)),
+                    const SizedBox(width: 3),
+                    Text(contacto,
+                        style: const TextStyle(fontSize: 11, color: _gray)),
                   ],
                 ],
               ),
-            ],
-            const SizedBox(height: 10),
-            const Divider(height: 1),
-            const SizedBox(height: 8),
+              const SizedBox(height: 6),
 
-            // ── Botones ────────────────────────────────
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton.icon(
-                  onPressed: () => _eliminar(id, nombreCompleto),
-                  icon: const Icon(Icons.delete_outline, size: 16),
-                  label: const Text('Eliminar'),
-                  style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xFFC62828),
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              // ── Botones ────────────────────────────────
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  if (email.isNotEmpty)
+                    Expanded(
+                      child: Row(
+                        children: [
+                          const Icon(Icons.email_outlined,
+                              size: 13, color: Color(0xFF9E9E9E)),
+                          const SizedBox(width: 3),
+                          Expanded(
+                            child: Text(email,
+                                style: const TextStyle(fontSize: 11, color: _gray),
+                                overflow: TextOverflow.ellipsis),
+                          ),
+                        ],
+                      ),
+                    ),
+                  InkWell(
+                    onTap: () => _eliminar(id, nombreCompleto),
+                    borderRadius: BorderRadius.circular(6),
+                    child: const Padding(
+                      padding: EdgeInsets.all(4),
+                      child: Icon(Icons.delete_outline, size: 18, color: Color(0xFFC62828)),
+                    ),
                   ),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton.icon(
-                  onPressed: () => _editar(datos),
-                  icon: const Icon(Icons.edit_outlined, size: 16),
-                  label: const Text('Editar'),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 6),
-                    textStyle: const TextStyle(fontSize: 12),
+                  const SizedBox(width: 4),
+                  if (tieneContrato) ...[
+                    InkWell(
+                      onTap: () {
+                        final contratoId = datos['contrato_id'] as int;
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ReciboFormScreen(
+                              contratoIdInicial: contratoId,
+                            ),
+                          ),
+                        );
+                      },
+                      borderRadius: BorderRadius.circular(6),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF1A3A5C),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.receipt_long_outlined, size: 14, color: Colors.white),
+                            SizedBox(width: 4),
+                            Text('Recibo', style: TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w500)),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                  ],
+                  InkWell(
+                    onTap: () => _editar(datos),
+                    borderRadius: BorderRadius.circular(6),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: _magenta,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.edit_outlined, size: 14, color: Colors.white),
+                          SizedBox(width: 4),
+                          Text('Editar', style: TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w500)),
+                        ],
+                      ),
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ],
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

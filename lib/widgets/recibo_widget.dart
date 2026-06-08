@@ -4,8 +4,6 @@ import '../models/recibo_model.dart';
 import '../utils/numero_a_letras.dart';
 
 /// Vista previa del recibo en pantalla — formato ORIGINAL + COPIA en una hoja.
-/// Replica el diseño del PDF generado: sin marca de agua, logo arriba,
-/// LOCADOR/LOCATARIO, tabla con Vence, línea de corte entre secciones.
 class ReciboWidget extends StatelessWidget {
   final ReciboModel recibo;
 
@@ -15,18 +13,17 @@ class ReciboWidget extends StatelessWidget {
   static const _navy    = Color(0xFF1A3A5C);
   static const _dark    = Color(0xFF212121);
   static const _gray    = Color(0xFF757575);
-  static const _lightGray = Color(0xFFF5F5F5);
-  // ignore: unused_field
-  static const _green   = Color(0xFF2E7D32);
-  // ignore: unused_field
-  static const _blue    = Color(0xFF1565C0);
-  // ignore: unused_field
-  static const _red     = Color(0xFFC62828);
 
   static const _empresa        = 'COPPOLA PAVESE Inmobiliaria';
   static const _direccionEmp   = 'Blandengues 188 - San Miguel del Monte';
   static const _telefonos      = '02226 546317 / 02271 412950';
   static const _emailEmp       = 'coppolapavese@gmail.com';
+
+  /// Formateador de moneda con signo $ sin decimales
+  static final _fmtPesos = NumberFormat.currency(
+      locale: 'es_AR', symbol: '\$', decimalDigits: 0, customPattern: '\u00A4#,##0');
+
+  String _fmtM(double v) => recibo.esNeutro ? '____________' : _fmtPesos.format(v);
 
   @override
   Widget build(BuildContext context) {
@@ -35,13 +32,8 @@ class ReciboWidget extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // ── SECCIÓN ORIGINAL ────────────────────────────────────
           _seccionOriginal(),
-
-          // ── LÍNEA DE CORTE ──────────────────────────────────────
           _lineaCorte(),
-
-          // ── SECCIÓN COPIA ───────────────────────────────────────
           _seccionCopia(),
         ],
       ),
@@ -52,18 +44,17 @@ class ReciboWidget extends StatelessWidget {
   // SECCIÓN ORIGINAL
   // ────────────────────────────────────────────────────────────────
   Widget _seccionOriginal() {
-    final fmt    = DateFormat('dd/MM/yyyy');
-    final fmtNum = NumberFormat.currency(locale: 'es_AR', symbol: '\$', decimalDigits: 2);
-    // Helper: en recibo neutro, montos => línea en blanco
-    String fmtM(double v) => recibo.esNeutro ? '____________' : fmtNum.format(v);
+    final fmt = DateFormat('dd/MM/yyyy');
 
     String fechaStr = recibo.fechaEmision;
     try { fechaStr = fmt.format(DateTime.parse(recibo.fechaEmision)); } catch (_) {}
 
-    final montoLetras = recibo.esNeutro ? '___________________________' : numeroALetras(recibo.montoTotal);
-    final locador     = recibo.propietarioNombre ?? '___________';
-    final locatario   = recibo.inquilinoNombre   ?? '___________';
-    final domicilio   = recibo.direccionCompleta.isNotEmpty
+    final montoLetras = recibo.esNeutro
+        ? '___________________________'
+        : numeroALetras(recibo.montoTotal);
+    final locador   = recibo.propietarioNombre ?? '___________';
+    final locatario = recibo.inquilinoNombre   ?? '___________';
+    final domicilio = recibo.direccionCompleta.isNotEmpty
         ? recibo.direccionCompleta.toUpperCase()
         : '___________';
 
@@ -72,16 +63,14 @@ class ReciboWidget extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Encabezado: logo + empresa + badges ──────────────
+          // ── Encabezado: logo + empresa + badge ──────────────
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Logo
-              Image.asset('assets/images/cp.png',
-                  width: 90, height: 90, fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => const SizedBox(width: 90, height: 90)),
+              Image.asset('assets/images/cp_logo.png',
+                  width: 150, height: 130, fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const SizedBox(width: 150, height: 130)),
               const SizedBox(width: 12),
-              // Empresa
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -100,7 +89,6 @@ class ReciboWidget extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: 8),
-              // Badge
               _badge('ORIGINAL', bg: _navy, size: 10),
             ],
           ),
@@ -137,8 +125,8 @@ class ReciboWidget extends StatelessWidget {
           _parrafoBorde(
             'POR MANDATO DEL LOCADOR RECIBI DEL LOCATARIO LA SUMA DE '
             '${montoLetras.toUpperCase()} '
-            '(${fmtM(recibo.montoTotal)}) '
-            'POR EL ALQUILER DE UNA PROPIEDAD UBICADA EN $domicilio.',
+            '(${_fmtM(recibo.montoTotal)}) '
+            'POR EL ALQUILER DE UNA PROPIEDAD UBICADA EN $domicilio, SAN MIGUEL DEL MONTE.',
           ),
           const SizedBox(height: 10),
 
@@ -147,7 +135,7 @@ class ReciboWidget extends StatelessWidget {
           const SizedBox(height: 10),
 
           // ── Resumen de pago ───────────────────────────────────
-          _resumenPago(fmtNum),
+          _resumenPago(),
 
           // ── Notas ─────────────────────────────────────────────
           if (recibo.notas != null && recibo.notas!.isNotEmpty) ...[
@@ -158,9 +146,13 @@ class ReciboWidget extends StatelessWidget {
           const SizedBox(height: 10),
 
           // ── Pie ───────────────────────────────────────────────
-          Center(
+          Align(
+            alignment: Alignment.centerRight,
             child: Text(_empresa,
-                style: const TextStyle(fontSize: 9, color: _gray)),
+                style: const TextStyle(
+                    fontSize: 9,
+                    color: _gray,
+                    fontWeight: FontWeight.bold)),
           ),
         ],
       ),
@@ -199,20 +191,20 @@ class ReciboWidget extends StatelessWidget {
   }
 
   // ────────────────────────────────────────────────────────────────
-  // SECCIÓN COPIA
+  // SECCIÓN COPIA — sin logo, sin empresa, sin teléfonos/dirección
   // ────────────────────────────────────────────────────────────────
   Widget _seccionCopia() {
-    final fmt    = DateFormat('dd/MM/yyyy');
-    final fmtNum = NumberFormat.currency(locale: 'es_AR', symbol: '\$', decimalDigits: 2);
-    String fmtM(double v) => recibo.esNeutro ? '____________' : fmtNum.format(v);
+    final fmt = DateFormat('dd/MM/yyyy');
 
     String fechaStr = recibo.fechaEmision;
     try { fechaStr = fmt.format(DateTime.parse(recibo.fechaEmision)); } catch (_) {}
 
-    final montoLetras = recibo.esNeutro ? '___________________________' : numeroALetras(recibo.montoTotal);
-    final locador     = recibo.propietarioNombre ?? '___________';
-    final locatario   = recibo.inquilinoNombre   ?? '___________';
-    final domicilio   = recibo.direccionCompleta.isNotEmpty
+    final montoLetras = recibo.esNeutro
+        ? '___________________________'
+        : numeroALetras(recibo.montoTotal);
+    final locador   = recibo.propietarioNombre ?? '___________';
+    final locatario = recibo.inquilinoNombre   ?? '___________';
+    final domicilio = recibo.direccionCompleta.isNotEmpty
         ? recibo.direccionCompleta.toUpperCase()
         : '___________';
 
@@ -221,14 +213,10 @@ class ReciboWidget extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Encabezado copia ──────────────────────────────────
+          // ── Encabezado copia — solo inquilino + domicilio + badge
           Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Image.asset('assets/images/cp.png',
-                  width: 64, height: 64, fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => const SizedBox(width: 64, height: 64)),
-              const SizedBox(width: 10),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -271,21 +259,20 @@ class ReciboWidget extends StatelessWidget {
           ),
           const SizedBox(height: 8),
 
-          // ── LOCADOR / LOCATARIO ───────────────────────────────
-          _filaLocador(locador: locador, locatario: locatario, small: true),
+          // ── LOCADOR / LOCATARIO — línea abajo ────────────────
+          _filaLocador(locador: locador, locatario: locatario, small: true, soloLinea: true),
           const SizedBox(height: 8),
 
           // ── Párrafo monto ─────────────────────────────────────
           _parrafoBorde(
             'POR MANDATO DEL LOCADOR RECIBI DEL LOCATARIO LA SUMA DE '
             '${montoLetras.toUpperCase()} '
-            '(${fmtM(recibo.montoTotal)}) '
-            'POR EL ALQUILER DE UNA PROPIEDAD UBICADA EN $domicilio.',
+            '(${_fmtM(recibo.montoTotal)}) '
+            'POR EL ALQUILER DE UNA PROPIEDAD UBICADA EN $domicilio, SAN MIGUEL DEL MONTE.',
             small: true,
           ),
           const SizedBox(height: 8),
 
-          // ── Según detalle ─────────────────────────────────────
           Text('Según Detalle:',
               style: const TextStyle(
                   fontSize: 10, fontWeight: FontWeight.bold, color: _dark)),
@@ -296,7 +283,7 @@ class ReciboWidget extends StatelessWidget {
           const SizedBox(height: 8),
 
           // ── Resumen de pago ───────────────────────────────────
-          _resumenPago(fmtNum, small: true),
+          _resumenPago(small: true),
 
           // ── Notas ─────────────────────────────────────────────
           if (recibo.notas != null && recibo.notas!.isNotEmpty) ...[
@@ -328,71 +315,69 @@ class ReciboWidget extends StatelessWidget {
     );
   }
 
-  Widget _dobleLinea() {
-    return Column(
-      children: [
-        Container(height: 1.5, color: _dark),
-        const SizedBox(height: 2),
-        Container(height: 1, color: _dark),
-      ],
-    );
-  }
-
+  /// LOCADOR / LOCATARIO — con cuadro border o solo línea abajo
   Widget _filaLocador({
     required String locador,
     required String locatario,
     bool small = false,
+    bool soloLinea = false,
   }) {
     final fs = small ? 10.0 : 11.0;
+
+    Widget campo(String label, String valor) {
+      if (soloLinea) {
+        // Solo línea debajo del texto
+        return Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label,
+                  style: TextStyle(
+                      fontSize: fs - 1,
+                      fontWeight: FontWeight.bold,
+                      color: _dark)),
+              const SizedBox(height: 2),
+              Text(valor,
+                  style: TextStyle(fontSize: fs, color: _dark),
+                  overflow: TextOverflow.ellipsis),
+              const SizedBox(height: 4),
+              Container(height: 1, color: const Color(0xFFBDBDBD)),
+            ],
+          ),
+        );
+      } else {
+        // Cuadro con borde
+        return Expanded(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: BoxDecoration(
+              border: Border.all(color: const Color(0xFFBDBDBD)),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label,
+                    style: TextStyle(
+                        fontSize: fs - 1,
+                        fontWeight: FontWeight.bold,
+                        color: _dark)),
+                const SizedBox(height: 2),
+                Text(valor,
+                    style: TextStyle(fontSize: fs, color: _dark),
+                    overflow: TextOverflow.ellipsis),
+              ],
+            ),
+          ),
+        );
+      }
+    }
+
     return Row(
       children: [
-        Expanded(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            decoration: BoxDecoration(
-              border: Border.all(color: const Color(0xFFBDBDBD)),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('LOCADOR',
-                    style: TextStyle(
-                        fontSize: fs - 1,
-                        fontWeight: FontWeight.bold,
-                        color: _dark)),
-                const SizedBox(height: 2),
-                Text(locador,
-                    style: TextStyle(fontSize: fs, color: _dark),
-                    overflow: TextOverflow.ellipsis),
-              ],
-            ),
-          ),
-        ),
+        campo('LOCADOR', locador),
         const SizedBox(width: 8),
-        Expanded(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            decoration: BoxDecoration(
-              border: Border.all(color: const Color(0xFFBDBDBD)),
-              borderRadius: BorderRadius.circular(4),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('LOCATARIO',
-                    style: TextStyle(
-                        fontSize: fs - 1,
-                        fontWeight: FontWeight.bold,
-                        color: _dark)),
-                const SizedBox(height: 2),
-                Text(locatario,
-                    style: TextStyle(fontSize: fs, color: _dark),
-                    overflow: TextOverflow.ellipsis),
-              ],
-            ),
-          ),
-        ),
+        campo('LOCATARIO', locatario),
       ],
     );
   }
@@ -413,18 +398,14 @@ class ReciboWidget extends StatelessWidget {
     );
   }
 
+  /// Tabla de servicios — con columna Total (monto + punitorios)
   Widget _tablaServicios({bool small = false}) {
-    final fmtRaw = NumberFormat.currency(locale: 'es_AR', symbol: '\$', decimalDigits: 2);
-    String fmt(double v) => recibo.esNeutro ? '____________' : fmtRaw.format(v);
     final fs  = small ? 9.5 : 11.0;
     final fsH = small ? 9.0 : 10.0;
 
     final tieneVence = recibo.servicios.any(
         (s) => s.fechaVence != null && s.fechaVence!.isNotEmpty);
     final fmtVence = DateFormat('dd/MM');
-
-    final totalGeneral = recibo.servicios.fold<double>(
-        0, (sum, s) => sum + s.total);
 
     return Table(
       border: TableBorder(
@@ -450,7 +431,7 @@ class ReciboWidget extends StatelessWidget {
               3: const FlexColumnWidth(2),
             },
       children: [
-        // Header — fondo blanco, texto negro, borde inferior
+        // Header
         TableRow(
           decoration: const BoxDecoration(color: Colors.white),
           children: [
@@ -463,37 +444,28 @@ class ReciboWidget extends StatelessWidget {
         ),
         // Filas de servicios
         ...recibo.servicios.asMap().entries.map((e) {
-          final i = e.key;
           final s = e.value;
           String venceStr = '—';
           if (s.fechaVence != null && s.fechaVence!.isNotEmpty) {
             try { venceStr = fmtVence.format(DateTime.parse(s.fechaVence!)); } catch (_) {}
           }
+          final totalFila = s.monto + s.punitorios;
           return TableRow(
-            decoration: BoxDecoration(
-                color: i.isEven ? Colors.white : _lightGray),
+            decoration: const BoxDecoration(color: Colors.white),
             children: [
               if (tieneVence)
                 _td(venceStr, fs: fs, center: true),
               _td(s.descripcion, fs: fs),
-              _td(fmt(s.monto), fs: fs, center: true),
-              _td(!recibo.esNeutro && s.punitorios > 0 ? fmt(s.punitorios) : (recibo.esNeutro ? '____________' : '—'),
+              _td(_fmtM(s.monto), fs: fs, center: true),
+              _td(!recibo.esNeutro && s.punitorios > 0
+                  ? _fmtM(s.punitorios)
+                  : (recibo.esNeutro ? '____________' : '—'),
                   fs: fs, center: true),
-              _td(fmt(s.total), fs: fs, center: true, bold: true),
+              _td(recibo.esNeutro ? '____________' : _fmtM(totalFila),
+                  fs: fs, center: true),
             ],
           );
         }),
-        // Fila total
-        TableRow(
-          decoration: const BoxDecoration(color: Color(0xFFEEEEEE)),
-          children: [
-            if (tieneVence) _td('', fs: fs),
-            _td('TOTAL', fs: fsH, bold: true),
-            _td('', fs: fs),
-            _td('', fs: fs),
-            _td(fmt(totalGeneral), fs: fsH, center: true, bold: true),
-          ],
-        ),
       ],
     );
   }
@@ -523,23 +495,26 @@ class ReciboWidget extends StatelessWidget {
             textAlign: center ? TextAlign.center : TextAlign.left),
       );
 
-  Widget _resumenPago(NumberFormat fmtRaw, {bool small = false}) {
-    String fmt(double v) => recibo.esNeutro ? '____________' : fmtRaw.format(v);
+  /// Resumen: Monto a Abonar + espacio vacío + Total Abonado (si está pagado)
+  Widget _resumenPago({bool small = false}) {
     final fs = small ? 10.0 : 12.0;
+    final esPagado = recibo.estado == 'pagado' || recibo.montoAbonado > 0;
+
     return Align(
       alignment: Alignment.centerRight,
       child: SizedBox(
         width: 280,
         child: Column(
           children: [
-            _filaResumen('Monto a Abonar:', fmt(recibo.montoTotal),
-                _dark, fs: fs),
-            _filaResumen('TOTAL ABONADO:', fmt(recibo.montoAbonado),
-                _dark, fs: fs),
-            _filaResumen('Saldo:',
-                fmt(recibo.saldo),
-                _dark,
-                fs: fs, bold: true),
+            // Monto a Abonar (siempre visible)
+            _filaResumen('Monto a Abonar:', _fmtM(recibo.montoTotal),
+                _dark, fs: fs, bold: true),
+            // Espacio vacío
+            const SizedBox(height: 16),
+            // Total Abonado (solo si pagado/parcial)
+            if (esPagado)
+              _filaResumen('Total Abonado:', _fmtM(recibo.montoAbonado),
+                  _dark, fs: fs),
           ],
         ),
       ),

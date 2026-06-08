@@ -1,306 +1,306 @@
+import 'dart:convert';
+import 'package:archive/archive.dart';
 import 'package:excel/excel.dart';
 import 'package:intl/intl.dart';
 
 class ExcelGenerator {
   // ── Colores del tema ───────────────────────────────────────────
-  static final _headerFill = ExcelColor.fromHexString('#C2185B');
-  static final _filaParFill = ExcelColor.fromHexString('#FFFFFF');
-  static final _filaImparFill = ExcelColor.fromHexString('#FCF3F6');
-  static final _totalFill = ExcelColor.fromHexString('#F5F5F5');
-  static final _verdeFill = ExcelColor.fromHexString('#E8F5E9');
-  static final _rojFill = ExcelColor.fromHexString('#FFEBEE');
+  static final _magentaBorder = ExcelColor.fromHexString('#C2185B');
+  static final _lightBorder = ExcelColor.fromHexString('#E0E0E0');
+  static final _whiteFill = ExcelColor.fromHexString('#FFFFFF');
+  static final _totalFill = ExcelColor.fromHexString('#FAFAFA');
+  static final _headerFill = ExcelColor.fromHexString('#FCE4EC');
+  static final _redFont = ExcelColor.fromHexString('#C62828');
+  static final _blackFont = ExcelColor.fromHexString('#212121');
 
   static final _fmtFecha = DateFormat('dd/MM/yyyy');
   static final _fmtMonto =
-      NumberFormat.currency(locale: 'es_AR', symbol: '\$', decimalDigits: 2);
+      NumberFormat.currency(locale: 'es_AR', symbol: '\$', decimalDigits: 0, customPattern: '\u00A4#,##0');
+  static final _fmtMesAnio = DateFormat('MMMM yyyy', 'es');
+  static final _fmtMesCorto = DateFormat('MMM', 'es');
+
+  // Guardamos la posición del bloque mensual para inyectar el gráfico luego
+  static int _mensualHeaderRow = -1;
+  static int _mensualFirstDataRow = -1;
+  static int _mensualLastDataRow = -1;
 
   // ════════════════════════════════════════════════════════════════
-  // REPORTE INQUILINO
-  // Hojas: Resumen Inquilinos, Historial, Pagados, Pendientes
-  // ════════════════════════════════════════════════════════════════
-
-  static Future<List<int>> generarExcelInquilino({
-    required List<Map<String, dynamic>> recibos,
-  }) async {
-    final excel = Excel.createExcel();
-
-    _crearHojaResumenInquilino(excel, recibos);
-    _crearHojaHistorial(excel, recibos, 'Historial de Recibos', null);
-    _crearHojaHistorial(
-        excel,
-        recibos.where((r) => r['estado'] == 'pagado').toList(),
-        'Recibos Pagados',
-        'pagado');
-    _crearHojaHistorial(
-        excel,
-        recibos
-            .where((r) =>
-                r['estado'] == 'pendiente' || r['estado'] == 'parcial')
-            .toList(),
-        'Recibos Pendientes',
-        'pendiente');
-
-    if (excel.sheets.containsKey('Sheet1')) excel.delete('Sheet1');
-    final bytes = excel.save();
-    return bytes ?? [];
-  }
-
-  // ════════════════════════════════════════════════════════════════
-  // REPORTE PROPIETARIO
-  // Hojas: Resumen Propietarios, Historial, Pagados, Pendientes
+  // REPORTE PROPIETARIO — hoja única, pensada para imprimir/fotocopiar
   // ════════════════════════════════════════════════════════════════
 
   static Future<List<int>> generarExcelPropietario({
-    required List<Map<String, dynamic>> resumenPropietarios,
     required List<Map<String, dynamic>> recibos,
+    String? propietarioNombre,
+    String? mesAnio,
   }) async {
     final excel = Excel.createExcel();
 
-    _crearHojaResumenPropietario(excel, resumenPropietarios);
-    _crearHojaHistorial(excel, recibos, 'Historial de Recibos', null);
-    _crearHojaHistorial(
-        excel,
-        recibos.where((r) => r['estado'] == 'pagado').toList(),
-        'Recibos Pagados',
-        'pagado');
-    _crearHojaHistorial(
-        excel,
-        recibos
-            .where((r) =>
-                r['estado'] == 'pendiente' || r['estado'] == 'parcial')
-            .toList(),
-        'Recibos Pendientes',
-        'pendiente');
+    _crearHojaResumenPropietario(excel, recibos,
+        propietarioNombre: propietarioNombre, mesAnio: mesAnio);
 
     if (excel.sheets.containsKey('Sheet1')) excel.delete('Sheet1');
     final bytes = excel.save();
-    return bytes ?? [];
+    if (bytes == null) return [];
+
+    // Post-procesar XLSX: settings de impresión + gráfico
+    try {
+      return _postProcesarXlsx(
+        bytes,
+        chartHeaderRow: _mensualHeaderRow,
+        chartFirstDataRow: _mensualFirstDataRow,
+        chartLastDataRow: _mensualLastDataRow,
+      );
+    } catch (_) {
+      // Si algo falla en el post-proceso, devolvemos el xlsx original
+      return bytes;
+    }
   }
 
   // ════════════════════════════════════════════════════════════════
-  // HOJA RESUMEN — INQUILINO
-  // Inquilino | Alquiler Mes | Adm. 5% Inmob. | Total Propietario | Obs
+  // HOJA RESUMEN — PROPIETARIO
   // ════════════════════════════════════════════════════════════════
 
-  static void _crearHojaResumenInquilino(
-      Excel excel, List<Map<String, dynamic>> recibos) {
-    final sheet = excel['Resumen Inquilinos'];
+  static void _crearHojaResumenPropietario(
+      Excel excel, List<Map<String, dynamic>> recibos,
+      {String? propietarioNombre, String? mesAnio}) {
+    final sheet = excel['Resumen Propietarios'];
 
-    _celdaTitulo(sheet, 0, 0,
-        'COPPOLA PAVESE INMOBILIARIA — REPORTE POR INQUILINO', 5);
-    _celdaTitulo(sheet, 1, 0,
-        'Generado: ${_fmtFecha.format(DateTime.now())}', 5);
+    // ── Encabezado superior: Propietario + Mes/Año ──
+    final nombreProp = propietarioNombre ?? _extraerPropietario(recibos);
+    final periodo = mesAnio ?? _fmtMesAnio.format(DateTime.now());
+
+    _celdaTitulo(sheet, 0, 0, 'COPPOLA PAVESE INMOBILIARIA', 6);
+    _celdaTitulo(sheet, 1, 0, 'Propietario: $nombreProp', 6);
+    _celdaTitulo(sheet, 2, 0, 'Período: $periodo', 6);
+    _celdaTitulo(
+        sheet, 3, 0, 'Generado: ${_fmtFecha.format(DateTime.now())}', 6);
     sheet.appendRow([TextCellValue('')]);
 
     final headers = [
       'Inquilino',
+      'Propiedad',
       'Alquiler Mes',
-      'Adm. 5% Inmob.',
+      '10%',
       'Total Propietario',
       'Observaciones',
     ];
     _agregarEncabezados(sheet, sheet.maxRows, headers);
 
-    // Agrupar por inquilino
-    final mapaInq = <String, _ResumenInquilino>{};
+    // Agrupar por inquilino + propiedad
+    final mapa = <String, _ResumenPropietario>{};
     for (final r in recibos) {
-      final inq = r['inquilino_nombre'] as String? ?? 'Sin inquilino';
-      if (!mapaInq.containsKey(inq)) {
-        mapaInq[inq] = _ResumenInquilino();
+      final inquilino = r['inquilino_nombre'] as String? ?? 'Sin inquilino';
+      final direccion = r['direccion'] as String? ?? '';
+      final localidad = r['localidad'] as String? ?? '';
+      final propiedad =
+          localidad.isNotEmpty ? '$direccion, $localidad' : direccion;
+      final clave = '$inquilino|$propiedad';
+      final estado = r['estado'] as String? ?? 'pendiente';
+
+      if (!mapa.containsKey(clave)) {
+        mapa[clave] = _ResumenPropietario(
+          propietario: r['propietario_nombre'] as String? ?? '',
+          inquilino: inquilino,
+          propiedad: propiedad,
+        );
       }
-      mapaInq[inq]!.monto +=
-          (r['monto_total'] as num?)?.toDouble() ?? 0.0;
+      final entry = mapa[clave]!;
+      final monto = (r['monto_total'] as num?)?.toDouble() ?? 0.0;
+      entry.montoTotal += monto;
+
+      if (estado == 'pagado') {
+        entry.pagado = true;
+      } else {
+        entry.pagado = false;
+        entry.montoPendiente += monto;
+      }
+
+      final fecha = r['fecha_emision'] as String? ?? '';
+      if (fecha.isNotEmpty && entry.fechaEmision.isEmpty) {
+        entry.fechaEmision = fecha;
+      }
+
       final nota = r['notas'] as String? ?? '';
-      if (nota.isNotEmpty && !mapaInq[inq]!.notas.contains(nota)) {
-        mapaInq[inq]!.notas.add(nota);
+      if (nota.isNotEmpty && !entry.notas.contains(nota)) {
+        entry.notas.add(nota);
       }
     }
 
     double sumAlquiler = 0, sumAdm = 0, sumProp = 0;
-    int i = 0;
-    for (final entry in mapaInq.entries) {
-      final monto = entry.value.monto;
-      final adm = monto * 0.05;
-      final prop = monto - adm;
+
+    for (final entry in mapa.values) {
+      final monto = entry.montoTotal;
+      final adm = monto * 0.10;
+      final totalProp = monto - adm;
       sumAlquiler += monto;
       sumAdm += adm;
-      sumProp += prop;
+      sumProp += totalProp;
 
-      _agregarFilaDatos(sheet, [
-        entry.key,
-        _fmtMonto.format(monto),
-        _fmtMonto.format(adm),
-        _fmtMonto.format(prop),
-        entry.value.notas.join('; '),
-      ], i % 2 == 0 ? _filaParFill : _filaImparFill);
-      i++;
+      String obs = '';
+      if (entry.pagado) {
+        obs = 'PAGADO';
+      } else {
+        String mesAnioStr = '';
+        if (entry.fechaEmision.isNotEmpty) {
+          try {
+            final dt = DateTime.parse(entry.fechaEmision);
+            mesAnioStr = ' Alquiler ${_fmtMesCorto.format(dt)} ${dt.year}';
+          } catch (_) {}
+        }
+        String cuotasStr = '';
+        for (final n in entry.notas) {
+          final match = RegExp(r'cuotas?\s*(\d+\s*[-–]\s*\d+)', caseSensitive: false).firstMatch(n);
+          if (match != null) {
+            cuotasStr = ', cuotas ${match.group(1)!.replaceAll('–', '-')}';
+            break;
+          }
+        }
+        obs = '${_fmtMonto.format(-entry.montoPendiente)}$mesAnioStr$cuotasStr';
+      }
+
+      final fila = sheet.maxRows;
+      sheet.appendRow([
+        TextCellValue(entry.inquilino),
+        TextCellValue(entry.propiedad),
+        TextCellValue(_fmtMonto.format(monto)),
+        TextCellValue(_fmtMonto.format(adm)),
+        TextCellValue(_fmtMonto.format(totalProp)),
+        TextCellValue(obs),
+      ]);
+
+      final esNegativo = !entry.pagado;
+      for (int c = 0; c < 6; c++) {
+        final cell = sheet.cell(
+            CellIndex.indexByColumnRow(columnIndex: c, rowIndex: fila));
+        cell.cellStyle = CellStyle(
+          fontSize: 12,
+          backgroundColorHex: _whiteFill,
+          fontColorHex: (c == 5 && esNegativo) ? _redFont : _blackFont,
+          bold: c == 5 && esNegativo,
+          leftBorder: Border(
+              borderStyle: BorderStyle.Thin, borderColorHex: _magentaBorder),
+          rightBorder: Border(
+              borderStyle: BorderStyle.Thin, borderColorHex: _magentaBorder),
+          bottomBorder: Border(
+              borderStyle: BorderStyle.Hair, borderColorHex: _lightBorder),
+        );
+      }
     }
 
     _agregarFilaTotales(sheet, [
       'TOTALES',
+      '',
       _fmtMonto.format(sumAlquiler),
       _fmtMonto.format(sumAdm),
       _fmtMonto.format(sumProp),
       '',
     ]);
 
-    _ajustarAnchos(sheet, [28, 20, 20, 20, 35]);
-  }
-
-  // ════════════════════════════════════════════════════════════════
-  // HOJA RESUMEN — PROPIETARIO
-  // Propietario | Inquilino | Dirección | Localidad | Recibos |
-  //   Facturado | Cobrado | Pendiente | Estado
-  // ════════════════════════════════════════════════════════════════
-
-  static void _crearHojaResumenPropietario(
-      Excel excel, List<Map<String, dynamic>> datos) {
-    final sheet = excel['Resumen Propietarios'];
-
-    _celdaTitulo(sheet, 0, 0,
-        'COPPOLA PAVESE INMOBILIARIA — REPORTE POR PROPIETARIO', 9);
-    _celdaTitulo(sheet, 1, 0,
-        'Generado: ${_fmtFecha.format(DateTime.now())}', 9);
+    // ── BLOQUE MENSUAL (debajo de la tabla principal) ──
+    sheet.appendRow([TextCellValue('')]);
+    sheet.appendRow([TextCellValue('')]);
+    _celdaTitulo(sheet, sheet.maxRows, 0, 'INGRESOS POR MES', 3);
     sheet.appendRow([TextCellValue('')]);
 
-    final headers = [
-      'Propietario',
-      'Inquilino',
-      'Dirección',
-      'Localidad',
-      'Total Recibos',
-      'Total Facturado',
-      'Total Cobrado',
-      'Total Pendiente',
-      'Estado',
+    _mensualHeaderRow = sheet.maxRows;
+    _agregarEncabezados(sheet, _mensualHeaderRow, ['Mes', 'Emitido', 'Cobrado']);
+
+    final mesesEs = [
+      '',
+      'Ene',
+      'Feb',
+      'Mar',
+      'Abr',
+      'May',
+      'Jun',
+      'Jul',
+      'Ago',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dic',
     ];
-    _agregarEncabezados(sheet, sheet.maxRows, headers);
+    final porMes = <String, _DatoMesGrafico>{};
+    for (final r in recibos) {
+      final fecha = r['fecha_emision'] as String? ?? '';
+      if (fecha.length < 7) continue;
+      final clave = fecha.substring(0, 7);
+      porMes.putIfAbsent(clave, () => _DatoMesGrafico());
+      final monto = (r['monto_total'] as num?)?.toDouble() ?? 0.0;
+      final abonado = (r['monto_abonado'] as num?)?.toDouble() ?? 0.0;
+      porMes[clave]!.emitido += monto;
+      porMes[clave]!.cobrado += abonado;
+    }
+    final claves = porMes.keys.toList()..sort();
 
-    double sumFact = 0, sumCob = 0, sumPend = 0;
+    _mensualFirstDataRow = -1;
+    _mensualLastDataRow = -1;
 
-    for (int i = 0; i < datos.length; i++) {
-      final d = datos[i];
-      final totalFact = (d['total_monto'] as num?)?.toDouble() ?? 0.0;
-      final totalCob = (d['total_cobrado'] as num?)?.toDouble() ?? 0.0;
-      final totalPend = (d['total_pendiente'] as num?)?.toDouble() ?? 0.0;
+    for (final clave in claves) {
+      final d = porMes[clave]!;
+      final partes = clave.split('-');
+      final anio = partes[0];
+      final mesNum = int.tryParse(partes[1]) ?? 1;
+      final etiqueta = '${mesesEs[mesNum]} $anio';
 
-      sumFact += totalFact;
-      sumCob += totalCob;
-      sumPend += totalPend;
+      final fila = sheet.maxRows;
+      if (_mensualFirstDataRow == -1) _mensualFirstDataRow = fila;
+      _mensualLastDataRow = fila;
 
-      final estado = totalPend <= 0
-          ? 'Al día'
-          : totalCob > 0
-              ? 'Parcial'
-              : 'Deudor';
+      // Usamos valores NUMÉRICOS para que el gráfico pueda leerlos.
+      sheet.appendRow([
+        TextCellValue(etiqueta),
+        DoubleCellValue(d.emitido),
+        DoubleCellValue(d.cobrado),
+      ]);
 
-      _agregarFilaDatos(sheet, [
-        d['propietario_nombre'] ?? '',
-        d['inquilino_nombre'] ?? '',
-        d['direccion'] ?? '',
-        d['localidad'] ?? '',
-        (d['total_recibos'] as num?)?.toInt() ?? 0,
-        _fmtMonto.format(totalFact),
-        _fmtMonto.format(totalCob),
-        _fmtMonto.format(totalPend),
-        estado,
-      ], i % 2 == 0 ? _filaParFill : _filaImparFill);
+      for (int c = 0; c < 3; c++) {
+        final cell = sheet.cell(
+            CellIndex.indexByColumnRow(columnIndex: c, rowIndex: fila));
+        cell.cellStyle = CellStyle(
+          fontSize: 12,
+          backgroundColorHex: _whiteFill,
+          numberFormat: c > 0
+              ? CustomNumericNumFormat(formatCode: '"\$"#,##0')
+              : NumFormat.defaultNumeric,
+          fontColorHex: c == 1
+              ? ExcelColor.fromHexString('#E65100')
+              : c == 2
+                  ? ExcelColor.fromHexString('#2E7D32')
+                  : _blackFont,
+          bold: c > 0,
+          leftBorder: Border(
+              borderStyle: BorderStyle.Thin, borderColorHex: _magentaBorder),
+          rightBorder: Border(
+              borderStyle: BorderStyle.Thin, borderColorHex: _magentaBorder),
+          bottomBorder: Border(
+              borderStyle: BorderStyle.Hair, borderColorHex: _lightBorder),
+        );
+      }
     }
 
-    _agregarFilaTotales(sheet, [
-      'TOTALES',
-      '',
-      '',
-      '',
-      datos.length,
-      _fmtMonto.format(sumFact),
-      _fmtMonto.format(sumCob),
-      _fmtMonto.format(sumPend),
-      '',
-    ]);
+    _ajustarAnchos(sheet, [28, 32, 22, 22, 22, 42]);
 
-    _ajustarAnchos(sheet, [25, 20, 25, 15, 12, 18, 18, 18, 10]);
+    // Altura de filas
+    for (int r = 0; r < sheet.maxRows; r++) {
+      sheet.setRowHeight(r, 26);
+    }
+    for (int r = 0; r < 5; r++) {
+      sheet.setRowHeight(r, 30);
+    }
   }
 
-  // ════════════════════════════════════════════════════════════════
-  // HOJAS HISTORIAL / PAGADOS / PENDIENTES (compartida)
-  // ════════════════════════════════════════════════════════════════
-
-  static void _crearHojaHistorial(
-    Excel excel,
-    List<Map<String, dynamic>> datos,
-    String nombreHoja,
-    String? filtroEstado,
-  ) {
-    final sheet = excel[nombreHoja];
-
-    String titulo =
-        'COPPOLA PAVESE INMOBILIARIA — $nombreHoja'.toUpperCase();
-    _celdaTitulo(sheet, 0, 0, titulo, 11);
-    _celdaTitulo(
-        sheet, 1, 0, 'Generado: ${_fmtFecha.format(DateTime.now())}', 11);
-    sheet.appendRow([TextCellValue('')]);
-
-    final headers = [
-      'N° Recibo',
-      'Fecha Emisión',
-      'Vencimiento',
-      'Propietario',
-      'Inquilino',
-      'Dirección',
-      'Localidad',
-      'Servicios',
-      'Monto Total',
-      'Monto Abonado',
-      'Saldo',
-      'Estado',
-    ];
-    _agregarEncabezados(sheet, sheet.maxRows, headers);
-
-    double sumTotal = 0, sumAbonado = 0, sumSaldo = 0;
-
-    for (int i = 0; i < datos.length; i++) {
-      final d = datos[i];
-      final mTotal = (d['monto_total'] as num?)?.toDouble() ?? 0.0;
-      final mAbonado = (d['monto_abonado'] as num?)?.toDouble() ?? 0.0;
-      final mSaldo = (d['saldo'] as num?)?.toDouble() ?? 0.0;
-      final estado = d['estado'] as String? ?? '';
-
-      sumTotal += mTotal;
-      sumAbonado += mAbonado;
-      sumSaldo += mSaldo;
-
-      _agregarFilaHistorial(
-        sheet,
-        [
-          'N° ${(d['numero_recibo'] as int? ?? 0).toString().padLeft(4, '0')}',
-          _formatearFecha(d['fecha_emision'] as String? ?? ''),
-          _formatearFecha(d['fecha_vencimiento'] as String? ?? ''),
-          d['propietario_nombre'] ?? '',
-          d['inquilino_nombre'] ?? '',
-          d['direccion'] ?? '',
-          d['localidad'] ?? '',
-          d['servicios_descripcion'] ?? '',
-          _fmtMonto.format(mTotal),
-          _fmtMonto.format(mAbonado),
-          _fmtMonto.format(mSaldo),
-          _labelEstado(estado),
-        ],
-        i % 2 == 0 ? _filaParFill : _filaImparFill,
-        estado,
-      );
+  /// Extraer nombre del propietario más frecuente de los recibos
+  static String _extraerPropietario(List<Map<String, dynamic>> recibos) {
+    if (recibos.isEmpty) return 'Todos';
+    final nombres = <String, int>{};
+    for (final r in recibos) {
+      final n = r['propietario_nombre'] as String? ?? '';
+      if (n.isNotEmpty) nombres[n] = (nombres[n] ?? 0) + 1;
     }
-
-    _agregarFilaTotales(sheet, [
-      'TOTALES', '', '', '', '', '', '', '',
-      _fmtMonto.format(sumTotal),
-      _fmtMonto.format(sumAbonado),
-      _fmtMonto.format(sumSaldo),
-      '',
-    ]);
-
-    _ajustarAnchos(
-        sheet, [12, 14, 14, 22, 20, 25, 15, 30, 18, 18, 18, 12]);
+    if (nombres.isEmpty) return 'Todos';
+    if (nombres.length == 1) return nombres.keys.first;
+    return 'Varios Propietarios';
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -317,8 +317,8 @@ class ExcelGenerator {
     cell.value = TextCellValue(texto);
     cell.cellStyle = CellStyle(
       bold: true,
-      fontSize: 12,
-      fontColorHex: ExcelColor.fromHexString('#C2185B'),
+      fontSize: 14,
+      fontColorHex: _magentaBorder,
     );
   }
 
@@ -333,71 +333,20 @@ class ExcelGenerator {
       cell.value = TextCellValue(headers[c]);
       cell.cellStyle = CellStyle(
         bold: true,
-        fontSize: 10,
-        fontColorHex: ExcelColor.fromHexString('#FFFFFF'),
+        fontSize: 12,
+        fontColorHex: _magentaBorder,
         backgroundColorHex: _headerFill,
         horizontalAlign: HorizontalAlign.Center,
         verticalAlign: VerticalAlign.Center,
         textWrapping: TextWrapping.WrapText,
-        leftBorder: Border(
-            borderStyle: BorderStyle.Thin,
-            borderColorHex: ExcelColor.fromHexString('#880E4F')),
-        rightBorder: Border(
-            borderStyle: BorderStyle.Thin,
-            borderColorHex: ExcelColor.fromHexString('#880E4F')),
-      );
-    }
-  }
-
-  static void _agregarFilaDatos(
-      Sheet sheet, List<dynamic> valores, ExcelColor fill) {
-    final fila = sheet.maxRows;
-    sheet.appendRow(valores.map((v) => _toCell(v)).toList());
-    for (int c = 0; c < valores.length; c++) {
-      final cell = sheet.cell(
-          CellIndex.indexByColumnRow(columnIndex: c, rowIndex: fila));
-      cell.cellStyle = CellStyle(
-        fontSize: 10,
-        backgroundColorHex: fill,
-        leftBorder: Border(
-            borderStyle: BorderStyle.Hair,
-            borderColorHex: ExcelColor.fromHexString('#E0E0E0')),
-        rightBorder: Border(
-            borderStyle: BorderStyle.Hair,
-            borderColorHex: ExcelColor.fromHexString('#E0E0E0')),
+        topBorder: Border(
+            borderStyle: BorderStyle.Medium, borderColorHex: _magentaBorder),
         bottomBorder: Border(
-            borderStyle: BorderStyle.Hair,
-            borderColorHex: ExcelColor.fromHexString('#E0E0E0')),
-      );
-    }
-  }
-
-  static void _agregarFilaHistorial(
-      Sheet sheet, List<dynamic> valores, ExcelColor fill, String estado) {
-    final fila = sheet.maxRows;
-    sheet.appendRow(valores.map((v) => _toCell(v)).toList());
-
-    ExcelColor? fillEstado;
-    if (estado == 'pagado') fillEstado = _verdeFill;
-    if (estado == 'pendiente') fillEstado = _rojFill;
-
-    for (int c = 0; c < valores.length; c++) {
-      final cell = sheet.cell(
-          CellIndex.indexByColumnRow(columnIndex: c, rowIndex: fila));
-      final bg = (c == 11 && fillEstado != null) ? fillEstado : fill;
-      cell.cellStyle = CellStyle(
-        fontSize: 10,
-        backgroundColorHex: bg,
-        bold: c == 11,
+            borderStyle: BorderStyle.Medium, borderColorHex: _magentaBorder),
         leftBorder: Border(
-            borderStyle: BorderStyle.Hair,
-            borderColorHex: ExcelColor.fromHexString('#E0E0E0')),
+            borderStyle: BorderStyle.Thin, borderColorHex: _magentaBorder),
         rightBorder: Border(
-            borderStyle: BorderStyle.Hair,
-            borderColorHex: ExcelColor.fromHexString('#E0E0E0')),
-        bottomBorder: Border(
-            borderStyle: BorderStyle.Hair,
-            borderColorHex: ExcelColor.fromHexString('#E0E0E0')),
+            borderStyle: BorderStyle.Thin, borderColorHex: _magentaBorder),
       );
     }
   }
@@ -410,15 +359,17 @@ class ExcelGenerator {
           CellIndex.indexByColumnRow(columnIndex: c, rowIndex: fila));
       cell.cellStyle = CellStyle(
         bold: true,
-        fontSize: 10,
+        fontSize: 13,
         backgroundColorHex: _totalFill,
-        fontColorHex: ExcelColor.fromHexString('#C2185B'),
+        fontColorHex: _magentaBorder,
         topBorder: Border(
-            borderStyle: BorderStyle.Medium,
-            borderColorHex: ExcelColor.fromHexString('#C2185B')),
+            borderStyle: BorderStyle.Medium, borderColorHex: _magentaBorder),
         bottomBorder: Border(
-            borderStyle: BorderStyle.Medium,
-            borderColorHex: ExcelColor.fromHexString('#C2185B')),
+            borderStyle: BorderStyle.Medium, borderColorHex: _magentaBorder),
+        leftBorder: Border(
+            borderStyle: BorderStyle.Thin, borderColorHex: _magentaBorder),
+        rightBorder: Border(
+            borderStyle: BorderStyle.Thin, borderColorHex: _magentaBorder),
       );
     }
   }
@@ -435,30 +386,299 @@ class ExcelGenerator {
     return TextCellValue(valor?.toString() ?? '');
   }
 
-  static String _formatearFecha(String fecha) {
-    if (fecha.isEmpty) return '—';
-    try {
-      return _fmtFecha.format(DateTime.parse(fecha));
-    } catch (_) {
-      return fecha;
+  // ════════════════════════════════════════════════════════════════
+  // POST-PROCESADO OOXML: print settings + gráfico de barras
+  // ════════════════════════════════════════════════════════════════
+
+  static List<int> _postProcesarXlsx(
+    List<int> bytes, {
+    required int chartHeaderRow,
+    required int chartFirstDataRow,
+    required int chartLastDataRow,
+  }) {
+    final decoder = ZipDecoder();
+    final archive = decoder.decodeBytes(bytes);
+    final encoder = ZipEncoder();
+
+    // 1) Inyectar pageSetup / printOptions / pageMargins en sheet1.xml
+    final sheetFile = archive.files.firstWhere(
+      (f) => f.name == 'xl/worksheets/sheet1.xml',
+      orElse: () => ArchiveFile('', 0, []),
+    );
+    if (sheetFile.name.isEmpty) return bytes;
+
+    String sheetXml = utf8.decode(sheetFile.content as List<int>);
+
+    // Agregar printOptions + pageMargins + pageSetup antes de </worksheet>
+    // Si ya existen, los reemplazamos.
+    sheetXml = _asegurarPrintSettings(sheetXml);
+
+    // 2) (Intento) inyectar gráfico de barras con los datos mensuales.
+    final puedeGraficar = chartFirstDataRow >= 0 &&
+        chartLastDataRow >= chartFirstDataRow &&
+        chartHeaderRow >= 0;
+
+    if (puedeGraficar) {
+      // Agregar referencia <drawing r:id="rId100"/> a sheet1.xml
+      if (!sheetXml.contains('<drawing ')) {
+        sheetXml = sheetXml.replaceFirst(
+          '</worksheet>',
+          '<drawing r:id="rId100"/></worksheet>',
+        );
+      }
     }
+
+    _reemplazarArchivo(archive, 'xl/worksheets/sheet1.xml',
+        utf8.encode(sheetXml));
+
+    if (puedeGraficar) {
+      // sheet1.xml.rels: agregar relación al drawing
+      final relsPath = 'xl/worksheets/_rels/sheet1.xml.rels';
+      final relsFile = archive.files.firstWhere(
+        (f) => f.name == relsPath,
+        orElse: () => ArchiveFile('', 0, []),
+      );
+      String relsXml;
+      if (relsFile.name.isEmpty) {
+        relsXml =
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            '<Relationship Id="rId100" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/>'
+            '</Relationships>';
+      } else {
+        relsXml = utf8.decode(relsFile.content as List<int>);
+        if (!relsXml.contains('rId100')) {
+          relsXml = relsXml.replaceFirst(
+            '</Relationships>',
+            '<Relationship Id="rId100" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/></Relationships>',
+          );
+        }
+      }
+      _reemplazarArchivo(archive, relsPath, utf8.encode(relsXml));
+
+      // drawing1.xml
+      final anchorStartRow = chartHeaderRow;
+      final anchorEndRow = chartHeaderRow + 20;
+      final drawingXml = _drawingXml(anchorStartRow, anchorEndRow);
+      _reemplazarArchivo(
+          archive, 'xl/drawings/drawing1.xml', utf8.encode(drawingXml));
+
+      // drawing1.xml.rels
+      final drawingRels =
+          '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+          '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+          '<Relationship Id="rIdChart1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/chart" Target="../charts/chart1.xml"/>'
+          '</Relationships>';
+      _reemplazarArchivo(archive, 'xl/drawings/_rels/drawing1.xml.rels',
+          utf8.encode(drawingRels));
+
+      // chart1.xml
+      final sheetName = 'Resumen Propietarios';
+      final chartXml = _chartXml(
+        sheetName: sheetName,
+        headerRow: chartHeaderRow,
+        firstDataRow: chartFirstDataRow,
+        lastDataRow: chartLastDataRow,
+      );
+      _reemplazarArchivo(
+          archive, 'xl/charts/chart1.xml', utf8.encode(chartXml));
+
+      // Content_Types.xml: agregar overrides para drawing y chart
+      final ctFile = archive.files.firstWhere(
+        (f) => f.name == '[Content_Types].xml',
+        orElse: () => ArchiveFile('', 0, []),
+      );
+      if (ctFile.name.isNotEmpty) {
+        String ct = utf8.decode(ctFile.content as List<int>);
+        if (!ct.contains('drawing1.xml')) {
+          ct = ct.replaceFirst(
+            '</Types>',
+            '<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>'
+                '<Override PartName="/xl/charts/chart1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawingml.chart+xml"/>'
+                '</Types>',
+          );
+        }
+        _reemplazarArchivo(archive, '[Content_Types].xml', utf8.encode(ct));
+      }
+    }
+
+    final out = encoder.encode(archive);
+    return out ?? bytes;
   }
 
-  static String _labelEstado(String estado) {
-    switch (estado) {
-      case 'pagado':
-        return 'Pagado';
-      case 'parcial':
-        return 'Parcial';
-      case 'pendiente':
-        return 'Pendiente';
-      default:
-        return estado;
+  /// Asegura que sheet1.xml tenga printOptions, pageMargins y pageSetup
+  /// configurados para impresión/fotocopia (horizontal, ajustar a página).
+  static String _asegurarPrintSettings(String xml) {
+    // Remover los existentes si los hay
+    xml = xml.replaceAll(RegExp(r'<printOptions[^/]*/>'), '');
+    xml = xml.replaceAll(RegExp(r'<pageMargins[^/]*/>'), '');
+    xml = xml.replaceAll(RegExp(r'<pageSetup[^/]*/>'), '');
+    xml = xml.replaceAll(RegExp(r'<pageSetUpPr[^/]*/>'), '');
+
+    // Agregar sheetPr con fitToPage
+    if (!xml.contains('<sheetPr')) {
+      xml = xml.replaceFirst(
+        '<dimension',
+        '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr><dimension',
+      );
+    } else {
+      xml = xml.replaceFirst(
+        RegExp(r'<sheetPr[^>]*/?>'),
+        '<sheetPr><pageSetUpPr fitToPage="1"/></sheetPr>',
+      );
     }
+
+    final printBlock =
+        '<printOptions horizontalCentered="1"/>'
+        '<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.2" footer="0.2"/>'
+        '<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0" horizontalDpi="300" verticalDpi="300"/>';
+
+    xml = xml.replaceFirst('</worksheet>', '$printBlock</worksheet>');
+    return xml;
+  }
+
+  static void _reemplazarArchivo(
+      Archive archive, String nombre, List<int> contenido) {
+    archive.files.removeWhere((f) => f.name == nombre);
+    archive.addFile(ArchiveFile(nombre, contenido.length, contenido));
+  }
+
+  static String _drawingXml(int startRow, int endRow) {
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<xdr:twoCellAnchor editAs="oneCell">'
+        '<xdr:from><xdr:col>7</xdr:col><xdr:colOff>0</xdr:colOff>'
+        '<xdr:row>$startRow</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:from>'
+        '<xdr:to><xdr:col>15</xdr:col><xdr:colOff>0</xdr:colOff>'
+        '<xdr:row>$endRow</xdr:row><xdr:rowOff>0</xdr:rowOff></xdr:to>'
+        '<xdr:graphicFrame macro="">'
+        '<xdr:nvGraphicFramePr>'
+        '<xdr:cNvPr id="2" name="Chart 1"/>'
+        '<xdr:cNvGraphicFramePr/>'
+        '</xdr:nvGraphicFramePr>'
+        '<xdr:xfrm><a:off x="0" y="0"/><a:ext cx="0" cy="0"/></xdr:xfrm>'
+        '<a:graphic><a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/chart">'
+        '<c:chart xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'r:id="rIdChart1"/>'
+        '</a:graphicData></a:graphic>'
+        '</xdr:graphicFrame>'
+        '<xdr:clientData/>'
+        '</xdr:twoCellAnchor>'
+        '</xdr:wsDr>';
+  }
+
+  static String _chartXml({
+    required String sheetName,
+    required int headerRow,
+    required int firstDataRow,
+    required int lastDataRow,
+  }) {
+    // Escape nombre de hoja para referencias
+    final sheetRef = sheetName.contains(' ') ? "'$sheetName'" : sheetName;
+
+    // Rango de categorías: columna A, filas firstDataRow..lastDataRow
+    final catRef =
+        '$sheetRef!\$A\$${firstDataRow + 1}:\$A\$${lastDataRow + 1}';
+    // Emitido: columna B
+    final emiRef =
+        '$sheetRef!\$B\$${firstDataRow + 1}:\$B\$${lastDataRow + 1}';
+    // Cobrado: columna C
+    final cobRef =
+        '$sheetRef!\$C\$${firstDataRow + 1}:\$C\$${lastDataRow + 1}';
+
+    final count = lastDataRow - firstDataRow + 1;
+
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        '<c:chartSpace xmlns:c="http://schemas.openxmlformats.org/drawingml/2006/chart" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        '<c:chart>'
+        '<c:title>'
+        '<c:tx><c:rich>'
+        '<a:bodyPr rot="0" spcFirstLastPara="1" vertOverflow="ellipsis" wrap="square" anchor="ctr" anchorCtr="1"/>'
+        '<a:lstStyle/>'
+        '<a:p><a:pPr><a:defRPr sz="1400" b="1"><a:solidFill><a:srgbClr val="C2185B"/></a:solidFill></a:defRPr></a:pPr>'
+        '<a:r><a:rPr lang="es-AR" sz="1400" b="1"><a:solidFill><a:srgbClr val="C2185B"/></a:solidFill></a:rPr>'
+        '<a:t>Ingresos por mes</a:t></a:r></a:p>'
+        '</c:rich></c:tx>'
+        '<c:overlay val="0"/>'
+        '</c:title>'
+        '<c:autoTitleDeleted val="0"/>'
+        '<c:plotArea>'
+        '<c:layout/>'
+        '<c:barChart>'
+        '<c:barDir val="col"/>'
+        '<c:grouping val="clustered"/>'
+        '<c:varyColors val="0"/>'
+        // Serie Emitido
+        '<c:ser>'
+        '<c:idx val="0"/>'
+        '<c:order val="0"/>'
+        '<c:tx><c:v>Emitido</c:v></c:tx>'
+        '<c:spPr><a:solidFill><a:srgbClr val="E65100"/></a:solidFill></c:spPr>'
+        '<c:cat><c:strRef><c:f>$catRef</c:f><c:strCache><c:ptCount val="$count"/></c:strCache></c:strRef></c:cat>'
+        '<c:val><c:numRef><c:f>$emiRef</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="$count"/></c:numCache></c:numRef></c:val>'
+        '</c:ser>'
+        // Serie Cobrado
+        '<c:ser>'
+        '<c:idx val="1"/>'
+        '<c:order val="1"/>'
+        '<c:tx><c:v>Cobrado</c:v></c:tx>'
+        '<c:spPr><a:solidFill><a:srgbClr val="2E7D32"/></a:solidFill></c:spPr>'
+        '<c:cat><c:strRef><c:f>$catRef</c:f><c:strCache><c:ptCount val="$count"/></c:strCache></c:strRef></c:cat>'
+        '<c:val><c:numRef><c:f>$cobRef</c:f><c:numCache><c:formatCode>General</c:formatCode><c:ptCount val="$count"/></c:numCache></c:numRef></c:val>'
+        '</c:ser>'
+        '<c:gapWidth val="100"/>'
+        '<c:axId val="1"/>'
+        '<c:axId val="2"/>'
+        '</c:barChart>'
+        '<c:catAx>'
+        '<c:axId val="1"/>'
+        '<c:scaling><c:orientation val="minMax"/></c:scaling>'
+        '<c:delete val="0"/>'
+        '<c:axPos val="b"/>'
+        '<c:crossAx val="2"/>'
+        '</c:catAx>'
+        '<c:valAx>'
+        '<c:axId val="2"/>'
+        '<c:scaling><c:orientation val="minMax"/></c:scaling>'
+        '<c:delete val="0"/>'
+        '<c:axPos val="l"/>'
+        '<c:crossAx val="1"/>'
+        '</c:valAx>'
+        '</c:plotArea>'
+        '<c:legend>'
+        '<c:legendPos val="b"/>'
+        '<c:overlay val="0"/>'
+        '</c:legend>'
+        '<c:plotVisOnly val="1"/>'
+        '<c:dispBlanksAs val="gap"/>'
+        '</c:chart>'
+        '</c:chartSpace>';
   }
 }
 
-class _ResumenInquilino {
-  double monto = 0;
+class _ResumenPropietario {
+  final String propietario;
+  final String inquilino;
+  final String propiedad;
+  double montoTotal = 0;
+  double montoPendiente = 0;
+  bool pagado = true;
   List<String> notas = [];
+  String fechaEmision = '';
+
+  _ResumenPropietario({
+    required this.propietario,
+    required this.inquilino,
+    required this.propiedad,
+  });
+}
+
+class _DatoMesGrafico {
+  double emitido = 0;
+  double cobrado = 0;
 }

@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import '../../database/database_helper.dart';
+import 'propiedad_detalle_screen.dart';
 
 class PropiedadesListScreen extends StatefulWidget {
   const PropiedadesListScreen({super.key});
@@ -134,6 +136,7 @@ class _PropiedadesListScreenState extends State<PropiedadesListScreen> {
   List<Map<String, dynamic>> _propiedades = [];
   List<Map<String, dynamic>> _propiedadesFiltradas = [];
   List<Map<String, dynamic>> _propietarios = [];
+  Map<int, String?> _primeraImagen = {}; // propiedadId → ruta primera imagen
   bool _cargando = true;
   final _busquedaCtrl = TextEditingController();
   Timer? _autoRefresh;
@@ -175,14 +178,26 @@ class _PropiedadesListScreenState extends State<PropiedadesListScreen> {
     super.dispose();
   }
 
+  Future<Map<int, String?>> _cargarImagenes(List<Map<String, dynamic>> props) async {
+    final mapa = <int, String?>{};
+    for (final p in props) {
+      final id = p['id'] as int;
+      final imgs = await _db.obtenerImagenesPropiedad(id);
+      mapa[id] = imgs.isNotEmpty ? imgs.first['ruta'] as String? : null;
+    }
+    return mapa;
+  }
+
   Future<void> _refrescoSilencioso() async {
     try {
       final props = await _db.obtenerPropiedades();
       final propietarios = await _db.obtenerPropietarios();
+      final imgs = await _cargarImagenes(props);
       if (mounted) {
         setState(() {
           _propiedades = props;
           _propietarios = propietarios;
+          _primeraImagen = imgs;
           _filtrar();
         });
       }
@@ -194,10 +209,12 @@ class _PropiedadesListScreenState extends State<PropiedadesListScreen> {
     try {
       final props = await _db.obtenerPropiedades();
       final propietarios = await _db.obtenerPropietarios();
+      final imgs = await _cargarImagenes(props);
       setState(() {
         _propiedades = props;
         _propiedadesFiltradas = props;
         _propietarios = propietarios;
+        _primeraImagen = imgs;
         _cargando = false;
       });
     } catch (e) {
@@ -498,13 +515,9 @@ class _PropiedadesListScreenState extends State<PropiedadesListScreen> {
       appBar: AppBar(
         title: const Text('Propiedades',
             style: TextStyle(fontWeight: FontWeight.bold)),
-        backgroundColor: Colors.white,
-        foregroundColor: const Color(0xFF212121),
+        backgroundColor: _primaryColor,
+        foregroundColor: Colors.white,
         elevation: 0,
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(1),
-          child: Container(height: 1, color: const Color(0xFFE0E0E0)),
-        ),
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => _abrirFormPropiedad(null),
@@ -592,8 +605,14 @@ class _PropiedadesListScreenState extends State<PropiedadesListScreen> {
                           ],
                         ),
                       )
-                    : ListView.builder(
+                    : GridView.builder(
                         padding: const EdgeInsets.fromLTRB(16, 4, 16, 80),
+                        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 2,
+                          crossAxisSpacing: 10,
+                          mainAxisSpacing: 0,
+                          childAspectRatio: 5.2 / (MediaQuery.textScalerOf(context).scale(1.0).clamp(1.0, 1.3)),
+                        ),
                         itemCount: _propiedadesFiltradas.length,
                         itemBuilder: (ctx, i) =>
                             _tarjeta(_propiedadesFiltradas[i]),
@@ -613,6 +632,8 @@ class _PropiedadesListScreenState extends State<PropiedadesListScreen> {
     final propietarioNombre = p['propietario_nombre'] as String?;
     final carpeta = p['carpeta'] as String?;
     final colorEstado = _colorEstado(estado);
+    final propId = p['id'] as int;
+    final rutaImg = _primeraImagen[propId];
 
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
@@ -622,20 +643,39 @@ class _PropiedadesListScreenState extends State<PropiedadesListScreen> {
         side: const BorderSide(color: Color(0xFFE0E0E0)),
       ),
       color: Colors.white,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () async {
+          await Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => PropiedadDetalleScreen(propiedadId: propId),
+            ),
+          );
+          _cargar();
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Ícono ──────────────────────────────────────
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: _primaryColor.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: const Icon(Icons.apartment,
-                  color: _primaryColor, size: 22),
+            // ── Imagen o ícono ─────────────────────────────
+            ClipRRect(
+              borderRadius: BorderRadius.circular(8),
+              child: rutaImg != null && File(rutaImg).existsSync()
+                  ? Image.file(
+                      File(rutaImg),
+                      width: 48,
+                      height: 48,
+                      fit: BoxFit.cover,
+                    )
+                  : Container(
+                      width: 48,
+                      height: 48,
+                      color: _primaryColor.withValues(alpha: 0.08),
+                      child: const Icon(Icons.apartment,
+                          color: _primaryColor, size: 22),
+                    ),
             ),
             const SizedBox(width: 14),
 
@@ -750,14 +790,31 @@ class _PropiedadesListScreenState extends State<PropiedadesListScreen> {
             PopupMenuButton<String>(
               icon: const Icon(Icons.more_vert,
                   size: 20, color: Color(0xFF9E9E9E)),
-              onSelected: (action) {
-                if (action == 'editar') {
+              onSelected: (action) async {
+                if (action == 'ficha') {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => PropiedadDetalleScreen(
+                          propiedadId: p['id'] as int),
+                    ),
+                  );
+                  _cargar();
+                } else if (action == 'editar') {
                   _abrirFormPropiedad(p);
                 } else if (action == 'eliminar') {
                   _eliminar(p);
                 }
               },
               itemBuilder: (_) => [
+                const PopupMenuItem(
+                  value: 'ficha',
+                  child: Row(children: [
+                    Icon(Icons.article_outlined, size: 18, color: Color(0xFFC2185B)),
+                    SizedBox(width: 8),
+                    Text('Ficha / Fotos', style: TextStyle(color: Color(0xFFC2185B), fontWeight: FontWeight.w600)),
+                  ]),
+                ),
                 const PopupMenuItem(
                   value: 'editar',
                   child: Row(children: [
@@ -780,6 +837,7 @@ class _PropiedadesListScreenState extends State<PropiedadesListScreen> {
             ),
           ],
         ),
+      ),
       ),
     );
   }

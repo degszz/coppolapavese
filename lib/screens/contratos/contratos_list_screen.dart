@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../database/database_helper.dart';
+import '../../utils/snackbar_helper.dart';
 import 'contrato_form_screen.dart';
 import '../recibos/recibo_form_screen.dart';
 
@@ -26,7 +28,7 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
   static const _magenta = Color(0xFFC2185B);
   static const _navy = Color(0xFF1A3A5C);
   static final _fmtMonto =
-      NumberFormat.currency(locale: 'es_AR', symbol: '\$', decimalDigits: 0);
+      NumberFormat.currency(locale: 'es_AR', symbol: '\$', decimalDigits: 0, customPattern: '\u00A4#,##0');
 
   @override
   void initState() {
@@ -65,6 +67,15 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
         c['_garantes'] = await _db.obtenerGarantesPorContrato(cId);
         c['_periodos'] = await _db.obtenerPeriodosPorContrato(cId);
         c['_conceptos'] = await _db.obtenerConceptosPorContrato(cId);
+        c['_serviciosUltimoRecibo'] = await _db.obtenerServiciosUltimoRecibo(cId);
+      }
+      // Cargar foto de la propiedad
+      final propiedadId = c['propiedad_id'] as int?;
+      if (propiedadId != null) {
+        final imgs = await _db.obtenerImagenesPropiedad(propiedadId);
+        if (imgs.isNotEmpty) {
+          c['_foto_propiedad'] = imgs.first['ruta'] as String?;
+        }
       }
     }
     return data;
@@ -84,9 +95,9 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
     } catch (e) {
       if (mounted) {
         setState(() => _cargando = false);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al cargar contratos: $e')),
-        );
+        mostrarNotificacion(context,
+            texto: 'Error al cargar contratos: $e',
+            color: const Color(0xFFC62828));
       }
     }
   }
@@ -137,22 +148,16 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
       try {
         await _db.eliminarContrato(id);
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Contrato eliminado'),
-              backgroundColor: Color(0xFF2E7D32),
-            ),
-          );
+          mostrarNotificacion(context,
+              texto: 'Contrato eliminado',
+              color: const Color(0xFF2E7D32));
           _cargar();
         }
       } catch (e) {
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error al eliminar: $e'),
-              backgroundColor: const Color(0xFFC62828),
-            ),
-          );
+          mostrarNotificacion(context,
+              texto: 'Error al eliminar: $e',
+              color: const Color(0xFFC62828));
         }
       }
     }
@@ -182,24 +187,20 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
             onPressed: _cargar,
           ),
         ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(56),
-          child: Container(
-            color: _magenta,
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      ),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
             child: TextField(
               controller: _busquedaCtrl,
-              style: const TextStyle(color: Colors.white),
               decoration: InputDecoration(
                 hintText:
                     'Buscar por propiedad, inquilino o propietario...',
-                hintStyle: const TextStyle(color: Colors.white54),
-                prefixIcon:
-                    const Icon(Icons.search, color: Colors.white70),
+                prefixIcon: const Icon(Icons.search, size: 20),
                 suffixIcon: _busquedaCtrl.text.isNotEmpty
                     ? IconButton(
-                        icon: const Icon(Icons.clear,
-                            color: Colors.white70),
+                        icon: const Icon(Icons.clear, size: 18),
                         onPressed: () {
                           _busquedaCtrl.clear();
                           _buscar();
@@ -207,19 +208,22 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                       )
                     : null,
                 filled: true,
-                fillColor: Colors.white.withOpacity(0.15),
+                fillColor: Colors.white,
+                isDense: true,
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide.none,
+                  borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: Color(0xFFE0E0E0)),
                 ),
                 contentPadding: const EdgeInsets.symmetric(
                     horizontal: 16, vertical: 10),
               ),
             ),
           ),
-        ),
-      ),
-      body: _cargando
+          Expanded(child: _cargando
           ? const Center(child: CircularProgressIndicator())
           : _contratosFiltrados.isEmpty
               ? Center(
@@ -256,6 +260,9 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                         _tarjetaContrato(_contratosFiltrados[i]),
                   ),
                 ),
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton(
         backgroundColor: _magenta,
         foregroundColor: Colors.white,
@@ -319,16 +326,8 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
               padding: const EdgeInsets.all(14),
               child: Row(
                 children: [
-                  // Icono
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: colorEstado.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                    child: Icon(Icons.description, color: colorEstado, size: 24),
-                  ),
+                  // Foto propiedad o ícono
+                  _buildFotoPropiedad(c, colorEstado),
                   const SizedBox(width: 12),
                   // Info principal
                   Expanded(
@@ -525,6 +524,40 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
   // SECCIONES DEL DETALLE
   // ════════════════════════════════════════════════════════════════
 
+  Widget _buildFotoPropiedad(Map<String, dynamic> c, Color colorEstado) {
+    final fotoRuta = c['_foto_propiedad'] as String?;
+    if (fotoRuta != null && fotoRuta.isNotEmpty) {
+      final file = File(fotoRuta);
+      if (file.existsSync()) {
+        return ClipRRect(
+          borderRadius: BorderRadius.circular(10),
+          child: SizedBox(
+            width: 44,
+            height: 44,
+            child: Image.file(
+              file,
+              fit: BoxFit.cover,
+              errorBuilder: (_, __, ___) => _iconoContrato(colorEstado),
+            ),
+          ),
+        );
+      }
+    }
+    return _iconoContrato(colorEstado);
+  }
+
+  Widget _iconoContrato(Color colorEstado) {
+    return Container(
+      width: 44,
+      height: 44,
+      decoration: BoxDecoration(
+        color: colorEstado.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Icon(Icons.description, color: colorEstado, size: 24),
+    );
+  }
+
   Widget _seccionTitulo(String texto, IconData icono) {
     return Row(
       children: [
@@ -605,8 +638,21 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
   }
 
   Widget _buildCondicionesEconomicas(Map<String, dynamic> c) {
-    final alquiler =
-        (c['alquiler_primer_periodo'] as num?)?.toDouble() ?? 0.0;
+    // Mostrar el monto del último período fijo si existe, sino alquiler_primer_periodo
+    final periodos =
+        (c['_periodos'] as List<Map<String, dynamic>>?) ?? [];
+    double alquiler;
+    String alquilerLabel;
+    if (periodos.isNotEmpty) {
+      final ultimo = periodos.last;
+      alquiler = (ultimo['monto'] as num?)?.toDouble() ?? 0.0;
+      final desde = ultimo['cuota_desde'] as int? ?? 0;
+      final hasta = ultimo['cuota_hasta'] as int? ?? 0;
+      alquilerLabel = 'Alquiler (cuota #$desde-#$hasta)';
+    } else {
+      alquiler = (c['alquiler_primer_periodo'] as num?)?.toDouble() ?? 0.0;
+      alquilerLabel = 'Alquiler';
+    }
     final hastaCuota = c['hasta_cuota'] as int? ?? 0;
     final extras = (c['extras'] as num?)?.toDouble() ?? 0.0;
     final primerDia = c['primer_dia_pago'] as int? ?? 1;
@@ -619,7 +665,7 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
           children: [
             Expanded(
               child: _cajaDato(
-                'Alquiler',
+                alquilerLabel,
                 _fmtMonto.format(alquiler),
                 const Color(0xFF2E7D32),
               ),
@@ -767,12 +813,12 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
   }
 
   List<Widget> _buildConceptos(Map<String, dynamic> c) {
-    final conceptos =
-        (c['_conceptos'] as List<Map<String, dynamic>>?) ?? [];
-    if (conceptos.isEmpty) return [];
+    final servicios =
+        (c['_serviciosUltimoRecibo'] as List<Map<String, dynamic>>?) ?? [];
+    if (servicios.isEmpty) return [];
 
     return [
-      _seccionTitulo('Conceptos Regulares', Icons.repeat),
+      _seccionTitulo('Servicios del último recibo', Icons.receipt_long_outlined),
       const SizedBox(height: 8),
       Container(
         decoration: BoxDecoration(
@@ -793,7 +839,7 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                 children: [
                   Expanded(
                       flex: 3,
-                      child: Text('Concepto',
+                      child: Text('Servicio',
                           style: TextStyle(
                               fontSize: 11, fontWeight: FontWeight.w600))),
                   Expanded(
@@ -802,20 +848,13 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                           style: TextStyle(
                               fontSize: 11, fontWeight: FontWeight.w600),
                           textAlign: TextAlign.right)),
-                  Expanded(
-                      flex: 1,
-                      child: Text('Tipo',
-                          style: TextStyle(
-                              fontSize: 11, fontWeight: FontWeight.w600),
-                          textAlign: TextAlign.right)),
                 ],
               ),
             ),
-            ...conceptos.asMap().entries.map((e) {
-              final cp = e.value;
-              final desc = cp['descripcion'] as String? ?? '';
-              final monto = (cp['monto'] as num?)?.toDouble() ?? 0.0;
-              final tipo = cp['tipo'] as String? ?? 'regular';
+            ...servicios.asMap().entries.map((e) {
+              final sp = e.value;
+              final desc = sp['descripcion'] as String? ?? '';
+              final monto = (sp['monto'] as num?)?.toDouble() ?? 0.0;
               return Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -837,20 +876,6 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                         monto > 0 ? _fmtMonto.format(monto) : '—',
                         style: const TextStyle(
                             fontSize: 12, fontWeight: FontWeight.w600),
-                        textAlign: TextAlign.right,
-                      ),
-                    ),
-                    Expanded(
-                      flex: 1,
-                      child: Text(
-                        tipo == 'regular' ? 'Regular' : 'Unico',
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: tipo == 'regular'
-                              ? const Color(0xFF1565C0)
-                              : const Color(0xFFE65100),
-                          fontWeight: FontWeight.w600,
-                        ),
                         textAlign: TextAlign.right,
                       ),
                     ),

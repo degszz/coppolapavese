@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "benquerencia-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "C:/Users/Maxi/Desktop/dev/benquerencia-web", "--", "--port", "4321"],
+      "port": 4321
+    },
+    {
+      "name": "Flutter Windows (Debug)",
+      "runtimeExecutable": "C:/develop/flutter/bin/flutter.bat",
+      "runtimeArgs": ["clean", "&&", "flutter", "pub", "get", "&&", "flutter", "run", "-d", "windows"],
+      "port": 8080
+    },
+    {
+      "name": "Propuesta HTML",
+      "runtimeExecutable": "C:/Program Files/nodejs/node.exe",
+      "runtimeArgs": ["C:/Users/Maxi/Desktop/serve_html.js"],
+      "port": 5500
+    }
+  ]
+}

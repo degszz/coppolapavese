@@ -103,6 +103,118 @@ class _ConfigRedScreenState extends State<ConfigRedScreen> {
     });
   }
 
+  Future<void> _diagnosticarConexion() async {
+    final ruta = _rutaCtrl.text.trim();
+    if (ruta.isEmpty) {
+      setState(() {
+        _mensaje = 'Primero indicá una carpeta de red para diagnosticar.';
+        _mensajeOk = false;
+      });
+      return;
+    }
+    setState(() {
+      _verificando = true;
+      _mensaje = null;
+    });
+
+    final reporte = await DbConfig.instance.diagnosticar(ruta);
+
+    if (!mounted) return;
+    setState(() => _verificando = false);
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(
+              reporte.ok ? Icons.check_circle : Icons.warning_amber,
+              color: reporte.ok
+                  ? const Color(0xFF2E7D32)
+                  : const Color(0xFFC62828),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                reporte.ok
+                    ? 'Conexi\u00F3n OK'
+                    : 'Se detectaron problemas',
+                style: const TextStyle(fontSize: 16),
+              ),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: 520,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                SelectableText(
+                  'Ruta: ${reporte.ruta}',
+                  style: const TextStyle(
+                      fontSize: 12, color: Color(0xFF616161)),
+                ),
+                const SizedBox(height: 12),
+                for (final paso in reporte.pasos) ...[
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        paso.ok
+                            ? Icons.check_circle_outline
+                            : Icons.cancel_outlined,
+                        color: paso.ok
+                            ? const Color(0xFF2E7D32)
+                            : const Color(0xFFC62828),
+                        size: 18,
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              paso.nombre,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFF212121),
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            SelectableText(
+                              paso.detalle,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: paso.ok
+                                    ? const Color(0xFF616161)
+                                    : const Color(0xFFC62828),
+                                height: 1.35,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                ],
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cerrar'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _copiarBaseLocal() async {
     final ruta = _rutaCtrl.text.trim();
     if (ruta.isEmpty) {
@@ -319,6 +431,13 @@ class _ConfigRedScreenState extends State<ConfigRedScreen> {
                                     _rutaCtrl.clear();
                                     _verificarYGuardar();
                                   },
+                          ),
+                          OutlinedButton.icon(
+                            icon: const Icon(Icons.troubleshoot, size: 18),
+                            label: const Text('Diagn\u00F3stico completo'),
+                            style: OutlinedButton.styleFrom(
+                                foregroundColor: const Color(0xFF1565C0)),
+                            onPressed: _verificando ? null : _diagnosticarConexion,
                           ),
                         ],
                       ),

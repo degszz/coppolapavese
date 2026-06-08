@@ -24,6 +24,7 @@ class ReciboModel {
   final String? propietarioEmail;
   final String? inquilinoNombre;
   final String? inquilinoTelefono;
+  final String? inquilinoCelular;
   final String? direccion;
   final String? localidad;
 
@@ -55,6 +56,7 @@ class ReciboModel {
     this.propietarioEmail,
     this.inquilinoNombre,
     this.inquilinoTelefono,
+    this.inquilinoCelular,
     this.direccion,
     this.localidad,
     this.esNeutro = false,
@@ -106,6 +108,7 @@ class ReciboModel {
         propietarioEmail: map['propietario_email'] as String?,
         inquilinoNombre: map['inquilino_nombre'] as String?,
         inquilinoTelefono: map['inquilino_telefono'] as String?,
+        inquilinoCelular: map['inquilino_celular'] as String?,
         direccion: map['direccion'] as String?,
         localidad: map['localidad'] as String?,
         servicios: servicios,
@@ -133,6 +136,7 @@ class ReciboModel {
     String? propietarioEmail,
     String? inquilinoNombre,
     String? inquilinoTelefono,
+    String? inquilinoCelular,
     String? direccion,
     String? localidad,
     List<ServicioItemModel>? servicios,
@@ -160,6 +164,7 @@ class ReciboModel {
         propietarioEmail: propietarioEmail ?? this.propietarioEmail,
         inquilinoNombre: inquilinoNombre ?? this.inquilinoNombre,
         inquilinoTelefono: inquilinoTelefono ?? this.inquilinoTelefono,
+        inquilinoCelular: inquilinoCelular ?? this.inquilinoCelular,
         direccion: direccion ?? this.direccion,
         localidad: localidad ?? this.localidad,
         esNeutro: esNeutro ?? this.esNeutro,
