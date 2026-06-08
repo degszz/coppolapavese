@@ -118,8 +118,10 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
   /// - Mes numérico y año (ej. "Alquiler mes 5/2026")
   /// - Posición dentro del período vigente (ej. "Mes 3 de 6")
   /// - Meses restantes hasta cambio de período
-  /// - Monto del siguiente período (si existe y la cuota es la última o
-  ///   está cerca del cambio)
+  /// - Monto y porcentaje del siguiente período (si existe)
+  ///
+  /// Itera los períodos en orden descendente (más reciente primero) para que
+  /// ante solapamiento entre períodos viejos y nuevos gane la última definición.
   ({String descripcion, String notaPeriodo}) _generarNotaPeriodo({
     required int numeroCuota,
     required DateTime fechaEmision,
@@ -130,38 +132,65 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
     final desc = 'Alquiler mes $mes/$anio';
     final nota = StringBuffer('Alquiler mes $mes/$anio.');
 
+    // Buscar el período al que pertenece esta cuota.
+    // Recorremos en orden DESC para que ante duplicados gane el más nuevo.
+    Map<String, dynamic>? periodoActual;
+    Map<String, dynamic>? siguientePeriodo;
     if (periodosData.isNotEmpty) {
-      // Buscar el período al que pertenece esta cuota
-      Map<String, dynamic>? periodoActual;
-      int periodoIndex = -1;
-      for (int i = 0; i < periodosData.length; i++) {
+      for (int i = periodosData.length - 1; i >= 0; i--) {
         final desde = periodosData[i]['cuota_desde'] as int;
         final hasta = periodosData[i]['cuota_hasta'] as int;
         if (numeroCuota >= desde && numeroCuota <= hasta) {
           periodoActual = periodosData[i];
-          periodoIndex = i;
+          // El siguiente período (si existe) es el que sigue en orden ASC
+          if (i + 1 < periodosData.length) {
+            siguientePeriodo = periodosData[i + 1];
+          }
           break;
         }
       }
+    }
 
-      if (periodoActual != null) {
-        final desde = periodoActual['cuota_desde'] as int;
-        final hasta = periodoActual['cuota_hasta'] as int;
-        final totalMesesPeriodo = hasta - desde + 1;
-        final mesActualEnPeriodo = numeroCuota - desde + 1;
-        final restantes = hasta - numeroCuota;
+    if (periodoActual != null) {
+      final desde = periodoActual['cuota_desde'] as int;
+      final hasta = periodoActual['cuota_hasta'] as int;
+      final totalMesesPeriodo = hasta - desde + 1;
+      final mesActualEnPeriodo = numeroCuota - desde + 1;
+      final restantes = hasta - numeroCuota;
 
-        nota.write(' Mes $mesActualEnPeriodo de $totalMesesPeriodo'
-            ' del período vigente (cuotas $desde–$hasta).');
+      nota.write(' Mes $mesActualEnPeriodo de $totalMesesPeriodo'
+          ' del período vigente (cuotas $desde–$hasta).');
 
-        if (restantes == 0) {
-          nota.write(' Última cuota de este período.');
-        } else {
-          nota.write(
-              ' Faltan $restantes mes${restantes == 1 ? '' : 'es'}'
-              ' para el cambio de período.');
-        }
+      if (restantes == 0) {
+        nota.write(' Última cuota de este período.');
+      } else {
+        nota.write(
+            ' Faltan $restantes mes${restantes == 1 ? '' : 'es'}'
+            ' para el cambio de período.');
       }
+
+      // ── Próximo período ────────────────────────────────────
+      if (siguientePeriodo != null) {
+        final sigMonto = (siguientePeriodo['monto'] as num).toDouble();
+        final sigPct = (siguientePeriodo['porcentaje'] as num?)?.toDouble() ?? 0;
+        final sigDesde = siguientePeriodo['cuota_desde'] as int;
+        final sigHasta = siguientePeriodo['cuota_hasta'] as int;
+        nota.write(' Próximo período: cuotas $sigDesde–$sigHasta,'
+            ' monto \$${sigMonto.toStringAsFixed(0)}');
+        if (sigPct > 0) {
+          nota.write(' (+${sigPct.toStringAsFixed(1)}%)');
+        }
+        nota.write('.');
+      }
+    } else {
+      // Cuota fuera de todos los períodos definidos: usar último período
+      // como referencia y avisar.
+      final ultimo = periodosData.last;
+      final ultHasta = ultimo['cuota_hasta'] as int;
+      final ultMonto = (ultimo['monto'] as num).toDouble();
+      nota.write(' Fuera de los períodos definidos'
+          ' (el último llega hasta cuota $ultHasta).'
+          ' Monto de referencia: \$${ultMonto.toStringAsFixed(0)}.');
     }
 
     return (descripcion: desc, notaPeriodo: nota.toString());

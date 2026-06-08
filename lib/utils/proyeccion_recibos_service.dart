@@ -68,8 +68,7 @@ class ProyeccionRecibosService {
 
     final resultado = <ProyeccionReciboModel>[];
     for (final r in rows) {
-      final fechaStr =
-          (r['fecha_vencimiento'] as String?) ?? (r['fecha_emision'] as String?);
+      final fechaStr = (r['fecha_emision'] as String?) ?? (r['fecha_vencimiento'] as String?);
       if (fechaStr == null || fechaStr.isEmpty) continue;
 
       DateTime fecha;
@@ -128,24 +127,23 @@ class ProyeccionRecibosService {
 
       final cuotasTotal = (c['cuotas_total'] as int?) ?? 0;
       final primerDiaPago = (c['primer_dia_pago'] as int?) ?? 1;
-      final emitidas = (c['num_cuotas_emitidas'] as int?) ?? 0;
+      final ultimaEmitida = (c['ultima_cuota_emitida'] as int?) ?? 0;
 
       if (cuotasTotal <= 0) continue;
-      if (emitidas >= cuotasTotal) continue; // contrato completado
+      if (ultimaEmitida >= cuotasTotal) continue; // contrato completado
 
       final inqNombre = ((c['inquilino_nombre'] as String?) ?? '').trim();
       final inqApellido = ((c['inquilino_apellido'] as String?) ?? '').trim();
       final nombreCompleto =
           inqApellido.isNotEmpty ? '$inqNombre $inqApellido'.trim() : inqNombre;
 
-      final monto = (c['monto_periodo_actual'] as num?)?.toDouble() ??
-          (c['alquiler_primer_periodo'] as num?)?.toDouble() ??
-          0.0;
-
       final contratoId = c['id'] as int;
 
-      // Proyectar todas las cuotas pendientes del contrato
-      for (int cuota = emitidas + 1; cuota <= cuotasTotal; cuota++) {
+      // Cargar períodos fijos del contrato para calcular montos por cuota
+      final periodos = await _db.obtenerPeriodosPorContrato(contratoId);
+
+      // Proyectar cuotas pendientes (desde la última emitida + 1)
+      for (int cuota = ultimaEmitida + 1; cuota <= cuotasTotal; cuota++) {
         // Saltar si esta cuota ya existe como recibo emitido
         if (emitidosSet.contains('${contratoId}_$cuota')) continue;
 
@@ -159,6 +157,25 @@ class ProyeccionRecibosService {
         if (fechaPrev.isBefore(desde)) continue;
         if (fechaPrev.isAfter(hasta)) break;
 
+        // Monto correspondiente al período que contiene esta cuota.
+        // Iteramos en orden DESC para que ante solapamiento (períodos
+        // viejos + nuevos) gane la definición más reciente.
+        double montoCuota = 0;
+        for (int i = periodos.length - 1; i >= 0; i--) {
+          final desdeP = periodos[i]['cuota_desde'] as int;
+          final hastaP = periodos[i]['cuota_hasta'] as int;
+          if (cuota >= desdeP && cuota <= hastaP) {
+            montoCuota = (periodos[i]['monto'] as num).toDouble();
+            break;
+          }
+        }
+        // Fallbacks si ningún período contiene la cuota
+        if (montoCuota == 0) {
+          montoCuota = (c['monto_periodo_actual'] as num?)?.toDouble() ??
+              (c['alquiler_primer_periodo'] as num?)?.toDouble() ??
+              0.0;
+        }
+
         resultado.add(ProyeccionReciboModel(
           contratoId: contratoId,
           numeroCuota: cuota,
@@ -171,7 +188,7 @@ class ProyeccionRecibosService {
           propiedadDireccion:
               (c['propiedad_direccion'] as String?) ?? '(sin dirección)',
           propietarioNombre: (c['propietario_nombre'] as String?) ?? '',
-          monto: monto,
+          monto: montoCuota,
           emitido: false,
         ));
       }

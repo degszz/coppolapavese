@@ -1475,11 +1475,14 @@ class DatabaseHelper {
   /// Siempre toma el período más reciente (mayor cuota_hasta).
   Future<double> obtenerMontoPeriodo(int contratoId, int numeroCuota) async {
     final db = await database;
-    // Buscar el período fijo que contiene la cuota actual
+    // Buscar el período fijo que contiene la cuota actual.
+    // Si hay solapamiento (períodos viejos + nuevos para el mismo rango),
+    // el ORDER BY cuota_desde DESC asegura que gane el más reciente.
     final periodoActual = await db.query(
       'periodos_fijos',
       where: 'contrato_id = ? AND cuota_desde <= ? AND cuota_hasta >= ?',
       whereArgs: [contratoId, numeroCuota, numeroCuota],
+      orderBy: 'cuota_desde DESC',
       limit: 1,
     );
     if (periodoActual.isNotEmpty) {
@@ -1544,8 +1547,7 @@ class DatabaseHelper {
       LEFT JOIN inquilinos   i  ON r.inquilino_id   = i.id
       LEFT JOIN propietarios p  ON r.propietario_id = p.id
       WHERE r.contrato_id IS NOT NULL
-        AND COALESCE(r.fecha_vencimiento, r.fecha_emision)
-            BETWEEN ? AND ?
+        AND r.fecha_emision BETWEEN ? AND ?
       ORDER BY COALESCE(r.fecha_vencimiento, r.fecha_emision) ASC
     ''', [desde, hasta]);
   }
@@ -1571,8 +1573,12 @@ class DatabaseHelper {
         i.celular                   AS inquilino_celular,
         i.telefono                  AS inquilino_telefono,
         p.nombre                    AS propietario_nombre,
-        (SELECT COUNT(*) FROM recibos r WHERE r.contrato_id = c.id)
-                                    AS num_cuotas_emitidas,
+        (SELECT COALESCE(MAX(r.numero_cuota), 0) FROM recibos r WHERE r.contrato_id = c.id)
+                                    AS ultima_cuota_emitida,
+        (SELECT r.fecha_emision FROM recibos r
+          WHERE r.contrato_id = c.id
+          ORDER BY r.id DESC LIMIT 1)
+                                    AS ultima_fecha_emision,
         (SELECT pf.monto FROM periodos_fijos pf
           WHERE pf.contrato_id = c.id
           ORDER BY pf.cuota_hasta DESC
