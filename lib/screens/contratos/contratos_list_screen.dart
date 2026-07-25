@@ -32,7 +32,6 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
   int? _expandidoId;
 
   static const _magenta = Color(0xFFC2185B);
-  static const _navy = Color(0xFF1A3A5C);
   static final _fmtMonto =
       NumberFormat.currency(locale: 'es_AR', symbol: '\$', decimalDigits: 0, customPattern: '\u00A4#,##0');
 
@@ -302,7 +301,6 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
     final rescindido = (c['rescindido'] as int? ?? 0) == 1;
     final fechaInicio = c['fecha_inicio'] as String? ?? '';
     final fechaFin = c['fecha_fin'] as String? ?? '';
-    final cuotasTotal = c['cuotas_total'] as int? ?? 0;
 
     final colorEstado =
         rescindido ? const Color(0xFFC62828) : const Color(0xFF2E7D32);
@@ -388,92 +386,128 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // ── PARTES ──
-                  _seccionTitulo('Partes', Icons.people_outline),
-                  const SizedBox(height: 8),
-                  _filaDetalle('Locador', propietario, Icons.person),
-                  _filaDetalle(
-                      'Locatario', inquilinoFull, Icons.person_outline),
-                  ..._buildGarantes(c),
-
-                  const SizedBox(height: 12),
-
-                  // ── PROPIEDAD ──
-                  _seccionTitulo('Propiedad', Icons.apartment_outlined),
-                  const SizedBox(height: 8),
-                  _filaDetalle('Direccion', direccion, Icons.location_on_outlined),
-                  if (localidad.isNotEmpty)
-                    _filaDetalle('Localidad', localidad, Icons.map_outlined),
-                  if (tipo.isNotEmpty)
-                    _filaDetalle('Tipo', tipo, Icons.category_outlined),
-
-                  const SizedBox(height: 12),
-
-                  // ── VIGENCIA ──
-                  _seccionTitulo('Vigencia del Contrato', Icons.date_range_outlined),
-                  const SizedBox(height: 8),
+                  // ═══ ROW 1: Partes (izq) | Propiedad (der) ═══
                   Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(
-                        child: _cajaDato(
-                          'Inicio',
-                          _fmtFecha(fechaInicio),
-                          const Color(0xFF1565C0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _seccionTitulo('Partes', Icons.people_outline),
+                            const SizedBox(height: 8),
+                            _filaDetalle('Locador', propietario, Icons.person, labelWidth: 75),
+                            _filaDetalle('Locatario', inquilinoFull, Icons.person_outline, labelWidth: 75),
+                            ..._buildGarantes(c),
+                          ],
                         ),
                       ),
-                      const SizedBox(width: 8),
+                      const SizedBox(width: 12),
                       Expanded(
-                        child: _cajaDato(
-                          'Fin',
-                          _fmtFecha(fechaFin),
-                          const Color(0xFFE65100),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: _cajaDato(
-                          'Cuotas',
-                          '$cuotasTotal',
-                          _navy,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _seccionTitulo('Propiedad', Icons.apartment_outlined),
+                            const SizedBox(height: 8),
+                            _filaDetalle('Direccion', direccion, Icons.location_on_outlined, labelWidth: 75),
+                            if (localidad.isNotEmpty)
+                              _filaDetalle('Localidad', localidad, Icons.map_outlined, labelWidth: 75),
+                            if (tipo.isNotEmpty)
+                              _filaDetalle('Tipo', tipo, Icons.category_outlined, labelWidth: 75),
+                          ],
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 6),
-                  _buildProgresoCuotas(c),
-                  if (rescindido) ...[
-                    const SizedBox(height: 8),
-                    _filaDetalle(
-                      'Fecha Rescision',
-                      _fmtFecha(c['fecha_rescision'] as String? ?? ''),
-                      Icons.cancel_outlined,
-                      color: const Color(0xFFC62828),
-                    ),
-                  ],
 
                   const SizedBox(height: 12),
 
-                  // ── ESTADO DE CUENTA ──
-                  _buildEstadoCuenta(c),
+                  // ═══ ROW 2: Vigencia (izq) | Estado de Cuenta (der) ═══
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _seccionTitulo('Vigencia del Contrato', Icons.date_range_outlined),
+                            const SizedBox(height: 8),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _cajaDato(
+                                    'Inicio',
+                                    _fmtFecha(fechaInicio),
+                                    const Color(0xFF1565C0),
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: _cajaDato(
+                                    'Fin',
+                                    _fmtFecha(fechaFin),
+                                    const Color(0xFFE65100),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            _buildProgresoCuotas(c),
+                            if (rescindido) ...[
+                              const SizedBox(height: 8),
+                              _filaDetalle(
+                                'Fecha Rescision',
+                                _fmtFecha(c['fecha_rescision'] as String? ?? ''),
+                                Icons.cancel_outlined,
+                                color: const Color(0xFFC62828),
+                                labelWidth: 75,
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(child: _buildEstadoCuenta(c)),
+                    ],
+                  ),
 
                   const SizedBox(height: 12),
 
-                  // ── CONDICIONES ECONÓMICAS ──
-                  _seccionTitulo(
-                      'Condiciones Economicas', Icons.attach_money),
+                  // ═══ ROW 3: Condiciones Económicas (full width) ═══
+                  _seccionTitulo('Condiciones Economicas', Icons.attach_money),
                   const SizedBox(height: 8),
                   _buildCondicionesEconomicas(c),
 
                   const SizedBox(height: 12),
 
-                  // ── PERÍODOS FIJOS ──
-                  ..._buildPeriodos(c),
+                  // ═══ ROW 4: Periodos Fijos (flex:3) | Servicios (flex:2) ═══
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        flex: 3,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            ..._buildPeriodos(c),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        flex: 2,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildUltimoReciboResumen(c),
+                            ..._buildConceptos(c),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
 
-                  // ── ÚLTIMO RECIBO ──
-                  _buildUltimoReciboResumen(c),
-
-                  // ── CONCEPTOS REGULARES ──
-                  ..._buildConceptos(c),
+                  const SizedBox(height: 12),
 
                   // ── HISTORIAL PROPIETARIO ──
                   _buildBotonHistorial(c),
@@ -593,15 +627,16 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
   }
 
   Widget _filaDetalle(String label, String valor, IconData icono,
-      {Color? color}) {
+      {Color? color, double labelWidth = 100}) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 4),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(icono, size: 15, color: color ?? const Color(0xFF9E9E9E)),
           const SizedBox(width: 8),
           SizedBox(
-            width: 100,
+            width: labelWidth,
             child: Text(label,
                 style: const TextStyle(
                     fontSize: 12,
@@ -759,7 +794,30 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
   List<Widget> _buildPeriodos(Map<String, dynamic> c) {
     final periodos =
         (c['_periodos'] as List<Map<String, dynamic>>?) ?? [];
-    if (periodos.isEmpty) return [];
+
+    if (periodos.isEmpty) {
+      return [
+        _seccionTitulo('Periodos Fijos', Icons.calendar_month_outlined),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF5F5F5),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0xFFE0E0E0)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.info_outline, size: 16, color: Color(0xFF9E9E9E)),
+              const SizedBox(width: 8),
+              Text('Sin periodos fijos configurados',
+                  style: const TextStyle(
+                      fontSize: 12, color: Color(0xFF9E9E9E))),
+            ],
+          ),
+        ),
+      ];
+    }
 
     final cuotaActual = c['_cuota_actual'] as int? ?? 0;
     final mesEmision = (c['_ultimo_mes_recibo'] as int?) ?? DateTime.now().month;
@@ -884,7 +942,34 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
   List<Widget> _buildConceptos(Map<String, dynamic> c) {
     final servicios =
         (c['_serviciosUltimoRecibo'] as List<Map<String, dynamic>>?) ?? [];
-    if (servicios.isEmpty) return [];
+    final numRecibo = c['_ultimo_num_recibo'] as int?;
+
+    if (servicios.isEmpty) {
+      final mensaje = numRecibo == null
+          ? 'Aun no se emitieron recibos'
+          : 'Sin servicios cargados';
+      return [
+        _seccionTitulo('Servicios del último recibo', Icons.receipt_long_outlined),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFFF5F5F5),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: const Color(0xFFE0E0E0)),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.info_outline, size: 16, color: Color(0xFF9E9E9E)),
+              const SizedBox(width: 8),
+              Text(mensaje,
+                  style: const TextStyle(
+                      fontSize: 12, color: Color(0xFF9E9E9E))),
+            ],
+          ),
+        ),
+      ];
+    }
 
     return [
       _seccionTitulo('Servicios del último recibo', Icons.receipt_long_outlined),
@@ -995,7 +1080,32 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
   Widget _buildEstadoCuenta(Map<String, dynamic> c) {
     final emitidos = c['_recibos_emitidos'] as int? ?? 0;
     final pendientes = c['_recibos_pendientes'] as int? ?? 0;
-    if (emitidos == 0) return const SizedBox.shrink();
+    if (emitidos == 0) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _seccionTitulo('Estado de Cuenta', Icons.account_balance_wallet_outlined),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF5F5F5),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFE0E0E0)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.info_outline, size: 16, color: Color(0xFF9E9E9E)),
+                const SizedBox(width: 8),
+                Text('Sin recibos emitidos',
+                    style: const TextStyle(
+                        fontSize: 12, color: Color(0xFF9E9E9E))),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
     final pagados = emitidos - pendientes;
     final ultimoSaldo = (c['_ultimo_saldo'] as num?)?.toDouble() ?? 0;
     final ultimoVto = c['_ultimo_vencimiento'] as String? ?? '';
