@@ -1572,7 +1572,14 @@ class DatabaseHelper {
           (SELECT MAX(numero_cuota) + 1 FROM recibos WHERE contrato_id = c.id),
           COALESCE(c.cuota_inicial, 1)
         )                  AS _cuota_actual,
-        c.mes_emision                    AS _ultimo_mes_recibo
+        c.mes_emision                    AS _ultimo_mes_recibo,
+
+        (SELECT COUNT(*) FROM recibos WHERE contrato_id = c.id) AS _recibos_emitidos,
+        (SELECT COUNT(*) FROM recibos WHERE contrato_id = c.id AND COALESCE(saldo, 0) > 0) AS _recibos_pendientes,
+        (SELECT numero_recibo FROM recibos WHERE contrato_id = c.id ORDER BY id DESC LIMIT 1) AS _ultimo_num_recibo,
+        (SELECT fecha_emision FROM recibos WHERE contrato_id = c.id ORDER BY id DESC LIMIT 1) AS _ultimo_fecha_emision,
+        (SELECT fecha_vencimiento FROM recibos WHERE contrato_id = c.id ORDER BY id DESC LIMIT 1) AS _ultimo_vencimiento,
+        (SELECT COALESCE(saldo, 0) FROM recibos WHERE contrato_id = c.id ORDER BY id DESC LIMIT 1) AS _ultimo_saldo
       FROM contratos c
       LEFT JOIN propiedades  pr ON c.propiedad_id  = pr.id
       LEFT JOIN inquilinos   i  ON c.inquilino_id  = i.id

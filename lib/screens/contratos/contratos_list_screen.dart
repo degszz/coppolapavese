@@ -6,6 +6,7 @@ import '../../database/database_helper.dart';
 import '../../utils/snackbar_helper.dart';
 import 'contrato_form_screen.dart';
 import '../recibos/recibo_form_screen.dart';
+import '../propietarios/propietario_detalle_screen.dart';
 
 class ContratosListScreen extends StatefulWidget {
   const ContratosListScreen({super.key});
@@ -395,7 +396,7 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                       'Locatario', inquilinoFull, Icons.person_outline),
                   ..._buildGarantes(c),
 
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
 
                   // ── PROPIEDAD ──
                   _seccionTitulo('Propiedad', Icons.apartment_outlined),
@@ -406,7 +407,7 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                   if (tipo.isNotEmpty)
                     _filaDetalle('Tipo', tipo, Icons.category_outlined),
 
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
 
                   // ── VIGENCIA ──
                   _seccionTitulo('Vigencia del Contrato', Icons.date_range_outlined),
@@ -438,6 +439,8 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                       ),
                     ],
                   ),
+                  const SizedBox(height: 6),
+                  _buildProgresoCuotas(c),
                   if (rescindido) ...[
                     const SizedBox(height: 8),
                     _filaDetalle(
@@ -448,7 +451,12 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                     ),
                   ],
 
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
+
+                  // ── ESTADO DE CUENTA ──
+                  _buildEstadoCuenta(c),
+
+                  const SizedBox(height: 12),
 
                   // ── CONDICIONES ECONÓMICAS ──
                   _seccionTitulo(
@@ -456,16 +464,23 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                   const SizedBox(height: 8),
                   _buildCondicionesEconomicas(c),
 
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
 
                   // ── PERÍODOS FIJOS ──
                   ..._buildPeriodos(c),
 
+                  // ── ÚLTIMO RECIBO ──
+                  _buildUltimoReciboResumen(c),
+
                   // ── CONCEPTOS REGULARES ──
                   ..._buildConceptos(c),
 
-                  // ── BOTONES DE ACCIÓN ──
+                  // ── HISTORIAL PROPIETARIO ──
+                  _buildBotonHistorial(c),
+
                   const SizedBox(height: 8),
+
+                  // ── BOTONES DE ACCIÓN ──
                   Row(
                     children: [
                       Expanded(
@@ -863,7 +878,6 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
           ],
         ),
       ),
-      const SizedBox(height: 16),
     ];
   }
 
@@ -941,8 +955,224 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
           ],
         ),
       ),
-      const SizedBox(height: 16),
     ];
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // NUEVAS SECCIONES DEL DETALLE
+  // ════════════════════════════════════════════════════════════════
+
+  Widget _buildProgresoCuotas(Map<String, dynamic> c) {
+    final cuotaActual = c['_cuota_actual'] as int? ?? 0;
+    final cuotasTotal = c['cuotas_total'] as int? ?? 0;
+    final mesEmision = (c['_ultimo_mes_recibo'] as int?) ?? DateTime.now().month;
+    if (cuotaActual == 0) return const SizedBox.shrink();
+    final mesLabel = _mesesAbrev[(mesEmision - 1).clamp(0, 11)];
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF3E5F5).withOpacity(0.5),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFFC2185B).withOpacity(0.15)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.trending_up, size: 18, color: Color(0xFFC2185B)),
+          const SizedBox(width: 8),
+          Text(
+            'Va por la cuota #$cuotaActual de $cuotasTotal  ·  $mesLabel',
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFFC2185B),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEstadoCuenta(Map<String, dynamic> c) {
+    final emitidos = c['_recibos_emitidos'] as int? ?? 0;
+    final pendientes = c['_recibos_pendientes'] as int? ?? 0;
+    if (emitidos == 0) return const SizedBox.shrink();
+    final pagados = emitidos - pendientes;
+    final ultimoSaldo = (c['_ultimo_saldo'] as num?)?.toDouble() ?? 0;
+    final ultimoVto = c['_ultimo_vencimiento'] as String? ?? '';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _seccionTitulo('Estado de Cuenta', Icons.account_balance_wallet_outlined),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(
+              child: _cajaDato('Recibos', '$emitidos', const Color(0xFF1565C0)),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _cajaDato('Pendientes', '$pendientes', const Color(0xFFE65100)),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: _cajaDato('Pagados', '$pagados', const Color(0xFF2E7D32)),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        _buildEstadoLinea(ultimoSaldo, ultimoVto),
+      ],
+    );
+  }
+
+  Widget _buildEstadoLinea(double saldo, String vtoStr) {
+    final ahora = DateTime.now();
+    String texto;
+    Color color;
+    IconData icono;
+    if (saldo <= 0) {
+      texto = 'Al dia — todo al corriente';
+      color = const Color(0xFF2E7D32);
+      icono = Icons.check_circle_outline;
+    } else {
+      try {
+        final vto = DateTime.parse(vtoStr);
+        final diff = ahora.difference(vto).inDays;
+        if (diff > 0) {
+          texto = 'Atrasado $diff dia${diff == 1 ? '' : 's'}';
+          color = const Color(0xFFC62828);
+          icono = Icons.error_outline;
+        } else {
+          texto = 'Pendiente — vence ${_fmtFecha(vtoStr)}';
+          color = const Color(0xFFE65100);
+          icono = Icons.warning_amber_outlined;
+        }
+      } catch (_) {
+        texto = 'Pendiente';
+        color = const Color(0xFFE65100);
+        icono = Icons.warning_amber_outlined;
+      }
+    }
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.2)),
+      ),
+      child: Row(
+        children: [
+          Icon(icono, size: 18, color: color),
+          const SizedBox(width: 8),
+          Text(texto,
+              style: TextStyle(
+                  fontSize: 13, fontWeight: FontWeight.w600, color: color)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUltimoReciboResumen(Map<String, dynamic> c) {
+    final numRecibo = c['_ultimo_num_recibo'] as int?;
+    if (numRecibo == null) return const SizedBox.shrink();
+    final fechaEmision = c['_ultimo_fecha_emision'] as String? ?? '';
+    final saldo = (c['_ultimo_saldo'] as num?)?.toDouble() ?? 0;
+    final estaPagado = saldo <= 0;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: estaPagado
+              ? const Color(0xFF2E7D32).withOpacity(0.06)
+              : const Color(0xFFE65100).withOpacity(0.06),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(
+            color: estaPagado
+                ? const Color(0xFF2E7D32).withOpacity(0.2)
+                : const Color(0xFFE65100).withOpacity(0.2),
+          ),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              estaPagado ? Icons.check_circle : Icons.pending_outlined,
+              size: 20,
+              color: estaPagado
+                  ? const Color(0xFF2E7D32)
+                  : const Color(0xFFE65100),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Recibo N° $numRecibo',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  Text(
+                    _fmtFecha(fechaEmision),
+                    style: const TextStyle(
+                        fontSize: 11, color: Color(0xFF757575)),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: estaPagado
+                    ? const Color(0xFF2E7D32)
+                    : const Color(0xFFE65100),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                estaPagado ? 'PAGADO' : 'PENDIENTE',
+                style: const TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBotonHistorial(Map<String, dynamic> c) {
+    final propId = c['propietario_id'] as int?;
+    final propNombre = c['propietario_nombre'] as String? ?? '';
+    if (propId == null) return const SizedBox.shrink();
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => PropietarioDetalleScreen(
+                propietarioId: propId,
+                nombrePropietario: propNombre,
+              ),
+            ),
+          );
+        },
+        icon: const Icon(Icons.history_outlined, size: 18),
+        label: const Text('Ver historial del propietario'),
+        style: OutlinedButton.styleFrom(
+          foregroundColor: const Color(0xFF6A1B9A),
+          side: BorderSide(
+              color: Color(0xFF6A1B9A).withOpacity(0.4)),
+        ),
+      ),
+    );
   }
 
   // ════════════════════════════════════════════════════════════════
