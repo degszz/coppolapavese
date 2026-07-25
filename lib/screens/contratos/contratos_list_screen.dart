@@ -31,6 +31,10 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
   // ID del contrato expandido (null = ninguno)
   int? _expandidoId;
 
+  // Filtros por chips
+  String? _filtroEstadoCuenta; // null = Todos | 'al_dia' | 'atrasado' | 'pendiente'
+  bool _filtroPendientes = false;
+
   static const _magenta = Color(0xFFC2185B);
   static final _fmtMonto =
       NumberFormat.currency(locale: 'es_AR', symbol: '\$', decimalDigits: 0, customPattern: '\u00A4#,##0');
@@ -109,20 +113,52 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
 
   void _buscar() {
     final q = _busquedaCtrl.text.toLowerCase().trim();
-    if (q.isEmpty) {
+    final hayFiltros = q.isNotEmpty ||
+        _filtroEstadoCuenta != null ||
+        _filtroPendientes;
+    if (!hayFiltros) {
       setState(() => _contratosFiltrados = List.from(_contratos));
       return;
     }
     setState(() {
       _contratosFiltrados = _contratos.where((c) {
-        final dir =
-            (c['propiedad_direccion'] as String? ?? '').toLowerCase();
-        final inq = (c['inquilino_nombre'] as String? ?? '').toLowerCase();
-        final prop =
-            (c['propietario_nombre'] as String? ?? '').toLowerCase();
-        return dir.contains(q) || inq.contains(q) || prop.contains(q);
+        // Texto
+        if (q.isNotEmpty) {
+          final dir =
+              (c['propiedad_direccion'] as String? ?? '').toLowerCase();
+          final inq = (c['inquilino_nombre'] as String? ?? '').toLowerCase();
+          final prop =
+              (c['propietario_nombre'] as String? ?? '').toLowerCase();
+          if (!dir.contains(q) && !inq.contains(q) && !prop.contains(q)) {
+            return false;
+          }
+        }
+        // Con pendientes
+        if (_filtroPendientes) {
+          final pend = c['_recibos_pendientes'] as int? ?? 0;
+          if (pend <= 0) return false;
+        }
+        // Estado de cuenta
+        if (_filtroEstadoCuenta != null) {
+          if (_estadoCuentaDe(c) != _filtroEstadoCuenta) return false;
+        }
+        return true;
       }).toList();
     });
+  }
+
+  String _estadoCuentaDe(Map<String, dynamic> c) {
+    final emitidos = c['_recibos_emitidos'] as int? ?? 0;
+    if (emitidos == 0) return 'al_dia';
+    final saldo = (c['_ultimo_saldo'] as num?)?.toDouble() ?? 0;
+    if (saldo <= 0) return 'al_dia';
+    final vtoStr = c['_ultimo_vencimiento'] as String? ?? '';
+    try {
+      final diff = DateTime.now().difference(DateTime.parse(vtoStr)).inDays;
+      return diff > 0 ? 'atrasado' : 'pendiente';
+    } catch (_) {
+      return 'pendiente';
+    }
   }
 
   Future<void> _eliminar(int id) async {
@@ -228,6 +264,149 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
               ),
             ),
           ),
+          // ── FILA DE FILTROS (chips) ──
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
+            child: Wrap(
+              spacing: 6,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                FilterChip(
+                  selected: _filtroPendientes,
+                  onSelected: (v) {
+                    setState(() => _filtroPendientes = v);
+                    _buscar();
+                  },
+                  label: const Text('Con pendientes',
+                      style: TextStyle(fontSize: 11)),
+                  avatar: const Icon(Icons.pending_actions, size: 14),
+                  selectedColor: const Color(0xFFE65100).withOpacity(0.18),
+                  backgroundColor: const Color(0xFFE65100).withOpacity(0.06),
+                  side: BorderSide(
+                    color: _filtroPendientes
+                        ? const Color(0xFFE65100)
+                        : const Color(0xFFE65100).withOpacity(0.3),
+                  ),
+                  labelStyle: TextStyle(
+                    color: _filtroPendientes
+                        ? const Color(0xFFE65100)
+                        : const Color(0xFF757575),
+                    fontWeight: _filtroPendientes
+                        ? FontWeight.w600
+                        : FontWeight.w500,
+                  ),
+                  showCheckmark: false,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                ),
+                FilterChip(
+                  selected: _filtroEstadoCuenta == 'al_dia',
+                  onSelected: (v) {
+                    setState(() => _filtroEstadoCuenta =
+                        v ? 'al_dia' : null);
+                    _buscar();
+                  },
+                  label: const Text('Al día',
+                      style: TextStyle(fontSize: 11)),
+                  avatar: const Icon(Icons.check_circle_outline, size: 14),
+                  selectedColor: const Color(0xFF2E7D32).withOpacity(0.18),
+                  backgroundColor: const Color(0xFF2E7D32).withOpacity(0.06),
+                  side: BorderSide(
+                    color: _filtroEstadoCuenta == 'al_dia'
+                        ? const Color(0xFF2E7D32)
+                        : const Color(0xFF2E7D32).withOpacity(0.3),
+                  ),
+                  labelStyle: TextStyle(
+                    color: _filtroEstadoCuenta == 'al_dia'
+                        ? const Color(0xFF2E7D32)
+                        : const Color(0xFF757575),
+                    fontWeight: _filtroEstadoCuenta == 'al_dia'
+                        ? FontWeight.w600
+                        : FontWeight.w500,
+                  ),
+                  showCheckmark: false,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                ),
+                FilterChip(
+                  selected: _filtroEstadoCuenta == 'atrasado',
+                  onSelected: (v) {
+                    setState(() => _filtroEstadoCuenta =
+                        v ? 'atrasado' : null);
+                    _buscar();
+                  },
+                  label: const Text('Atrasado',
+                      style: TextStyle(fontSize: 11)),
+                  avatar: const Icon(Icons.error_outline, size: 14),
+                  selectedColor: const Color(0xFFC62828).withOpacity(0.18),
+                  backgroundColor: const Color(0xFFC62828).withOpacity(0.06),
+                  side: BorderSide(
+                    color: _filtroEstadoCuenta == 'atrasado'
+                        ? const Color(0xFFC62828)
+                        : const Color(0xFF2E7D32).withOpacity(0.3),
+                  ),
+                  labelStyle: TextStyle(
+                    color: _filtroEstadoCuenta == 'atrasado'
+                        ? const Color(0xFFC62828)
+                        : const Color(0xFF757575),
+                    fontWeight: _filtroEstadoCuenta == 'atrasado'
+                        ? FontWeight.w600
+                        : FontWeight.w500,
+                  ),
+                  showCheckmark: false,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                ),
+                FilterChip(
+                  selected: _filtroEstadoCuenta == 'pendiente',
+                  onSelected: (v) {
+                    setState(() => _filtroEstadoCuenta =
+                        v ? 'pendiente' : null);
+                    _buscar();
+                  },
+                  label: const Text('Pendiente',
+                      style: TextStyle(fontSize: 11)),
+                  avatar: const Icon(Icons.schedule, size: 14),
+                  selectedColor: const Color(0xFFE65100).withOpacity(0.18),
+                  backgroundColor: const Color(0xFFE65100).withOpacity(0.06),
+                  side: BorderSide(
+                    color: _filtroEstadoCuenta == 'pendiente'
+                        ? const Color(0xFFE65100)
+                        : const Color(0xFFE65100).withOpacity(0.3),
+                  ),
+                  labelStyle: TextStyle(
+                    color: _filtroEstadoCuenta == 'pendiente'
+                        ? const Color(0xFFE65100)
+                        : const Color(0xFF757575),
+                    fontWeight: _filtroEstadoCuenta == 'pendiente'
+                        ? FontWeight.w600
+                        : FontWeight.w500,
+                  ),
+                  showCheckmark: false,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  visualDensity: VisualDensity.compact,
+                ),
+                if (_filtroPendientes || _filtroEstadoCuenta != null)
+                  ActionChip(
+                    label: const Text('Quitar filtros',
+                        style: TextStyle(fontSize: 11)),
+                    avatar: const Icon(Icons.clear, size: 14),
+                    onPressed: () {
+                      setState(() {
+                        _filtroPendientes = false;
+                        _filtroEstadoCuenta = null;
+                      });
+                      _buscar();
+                    },
+                    backgroundColor: const Color(0xFFE0E0E0).withOpacity(0.5),
+                    labelStyle: const TextStyle(color: Color(0xFF616161)),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                  ),
+              ],
+            ),
+          ),
           Expanded(child: _cargando
           ? const Center(child: CircularProgressIndicator())
           : _contratosFiltrados.isEmpty
@@ -235,24 +414,44 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.description_outlined,
-                          size: 72,
-                          color: Colors.grey.withOpacity(0.4)),
+                      Icon(
+                        (_filtroPendientes || _filtroEstadoCuenta != null)
+                            ? Icons.filter_alt_off_outlined
+                            : Icons.description_outlined,
+                        size: 72,
+                        color: Colors.grey.withOpacity(0.4),
+                      ),
                       const SizedBox(height: 16),
-                      const Text(
-                        'No hay contratos registrados',
-                        style: TextStyle(
+                      Text(
+                        (_filtroPendientes || _filtroEstadoCuenta != null)
+                            ? 'Ningún contrato coincide con los filtros'
+                            : 'No hay contratos registrados',
+                        style: const TextStyle(
                           fontSize: 16,
                           color: Color(0xFF9E9E9E),
                           fontWeight: FontWeight.w500,
                         ),
+                        textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 8),
-                      const Text(
-                        'Toca el boton + para agregar uno',
-                        style: TextStyle(
-                            fontSize: 13, color: Color(0xFFBDBDBD)),
-                      ),
+                      if (_filtroPendientes || _filtroEstadoCuenta != null) ...[
+                        TextButton.icon(
+                          onPressed: () {
+                            setState(() {
+                              _filtroPendientes = false;
+                              _filtroEstadoCuenta = null;
+                            });
+                            _buscar();
+                          },
+                          icon: const Icon(Icons.clear, size: 18),
+                          label: const Text('Quitar filtros'),
+                        ),
+                      ] else
+                        const Text(
+                          'Toca el boton + para agregar uno',
+                          style: TextStyle(
+                              fontSize: 13, color: Color(0xFFBDBDBD)),
+                        ),
                     ],
                   ),
                 )
