@@ -365,11 +365,18 @@ class PdfGenerator {
               textAlign: center ? pw.TextAlign.center : pw.TextAlign.left),
         );
 
+    final hasFecha = recibo.servicios.any(
+        (s) => s.fechaCuota != null && s.fechaCuota!.isNotEmpty);
     final hasFechaVence = recibo.servicios.any(
         (s) => s.fechaVence != null && s.fechaVence!.isNotEmpty);
     final fmtDate = DateFormat('dd/MM/yyyy');
 
-    final int colOffset = hasFechaVence ? 1 : 0;
+    int col(int offset) {
+      int c = 0;
+      if (hasFecha) c++;
+      if (hasFechaVence) c++;
+      return c + offset;
+    }
 
     return pw.Table(
       border: pw.TableBorder(
@@ -381,17 +388,19 @@ class PdfGenerator {
         verticalInside:   pw.BorderSide(width: 0.4, color: _lightBorder),
       ),
       columnWidths: {
-        if (hasFechaVence) 0: const pw.FixedColumnWidth(56),
-        (colOffset + 0): const pw.FlexColumnWidth(4),   // Descripción
-        (colOffset + 1): const pw.FlexColumnWidth(2),   // Monto
-        (colOffset + 2): const pw.FlexColumnWidth(1.5), // Punit.
-        (colOffset + 3): const pw.FlexColumnWidth(2),   // Total
+        if (hasFecha) 0: const pw.FixedColumnWidth(60),
+        if (hasFechaVence) (hasFecha ? 1 : 0): const pw.FixedColumnWidth(56),
+        col(0): const pw.FlexColumnWidth(4),   // Descripción
+        col(1): const pw.FlexColumnWidth(2),   // Monto
+        col(2): const pw.FlexColumnWidth(1.5), // Punit.
+        col(3): const pw.FlexColumnWidth(2),   // Total
       },
       children: [
         // Encabezado
         pw.TableRow(
           decoration: const pw.BoxDecoration(color: PdfColors.white),
           children: [
+            if (hasFecha) th('Fecha', center: true),
             if (hasFechaVence) th('Vence', center: true),
             th('Descripción'),
             th('Monto', center: true),
@@ -412,12 +421,13 @@ class PdfGenerator {
           return pw.TableRow(
             decoration: const pw.BoxDecoration(color: PdfColors.white),
             children: [
+              if (hasFecha) td(s.fechaCuota ?? '', center: true),
               if (hasFechaVence) td(venceStr, center: true),
               td(s.descripcion),
               td(_fmtM(recibo, s.monto), center: true),
               td(!recibo.esNeutro && s.punitorios > 0
                   ? _fmtM(recibo, s.punitorios)
-                  : (recibo.esNeutro ? '____________' : '—'),
+                  : (recibo.esNeutro ? '____________' : _fmtM(recibo, 0)),
                   center: true),
               td(recibo.esNeutro ? '____________' : _fmtM(recibo, totalFila),
                   center: true, bold: true),

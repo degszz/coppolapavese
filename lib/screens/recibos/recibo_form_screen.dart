@@ -114,86 +114,63 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
   /// Devuelve un par (descripcion, notaPeriodo) para la cuota [numeroCuota]
   /// emitida en la fecha [fechaEmision].
   ///
-  /// La nota incluye:
-  /// - Mes numérico y año (ej. "Alquiler mes 5/2026")
-  /// - Posición dentro del período vigente (ej. "Mes 3 de 6")
-  /// - Meses restantes hasta cambio de período
-  /// - Monto y porcentaje del siguiente período (si existe)
+  /// La nota al pie muestra siempre en qué cuota del período va el recibo,
+  /// y avisa únicamente cuando faltan 2, 1 o 0 meses para el cambio de período.
   ///
   /// Itera los períodos en orden descendente (más reciente primero) para que
   /// ante solapamiento entre períodos viejos y nuevos gane la última definición.
   ({String descripcion, String notaPeriodo}) _generarNotaPeriodo({
     required int numeroCuota,
+    required int cuotasTotal,
     required DateTime fechaEmision,
     required List<Map<String, dynamic>> periodosData,
+    required int mesEmision,
   }) {
-    final mes = fechaEmision.month.toString().padLeft(2, '0');
-    final anio = fechaEmision.year;
-    final desc = 'Alquiler mes $mes/$anio';
-    final nota = StringBuffer('Alquiler mes $mes/$anio.');
+    final fechaCuotaStr = _calcularMesCuota(mesEmision);
+    final desc = fechaCuotaStr.isNotEmpty
+        ? 'Alquiler Cuota N°$numeroCuota - $fechaCuotaStr'
+        : 'Alquiler Cuota N°$numeroCuota';
+    final nota = StringBuffer();
 
     // Buscar el período al que pertenece esta cuota.
     // Recorremos en orden DESC para que ante duplicados gane el más nuevo.
     Map<String, dynamic>? periodoActual;
-    Map<String, dynamic>? siguientePeriodo;
     if (periodosData.isNotEmpty) {
       for (int i = periodosData.length - 1; i >= 0; i--) {
         final desde = periodosData[i]['cuota_desde'] as int;
         final hasta = periodosData[i]['cuota_hasta'] as int;
         if (numeroCuota >= desde && numeroCuota <= hasta) {
           periodoActual = periodosData[i];
-          // El siguiente período (si existe) es el que sigue en orden ASC
-          if (i + 1 < periodosData.length) {
-            siguientePeriodo = periodosData[i + 1];
-          }
           break;
         }
       }
     }
 
-    if (periodoActual != null) {
-      final desde = periodoActual['cuota_desde'] as int;
+    // Aviso 1: ¿Última cuota del CONTRATO?
+    if (cuotasTotal > 0 && numeroCuota == cuotasTotal) {
+      nota.write('RECUERDE QUE EL CONTRATO DE ALQUILER ESTÁ PRÓXIMO A VENCER');
+    }
+
+    // Aviso 2: ¿Última cuota del PERIODO FIJO? (solo si no es la última del contrato)
+    if (periodoActual != null && !(cuotasTotal > 0 && numeroCuota == cuotasTotal)) {
       final hasta = periodoActual['cuota_hasta'] as int;
-      final totalMesesPeriodo = hasta - desde + 1;
-      final mesActualEnPeriodo = numeroCuota - desde + 1;
-      final restantes = hasta - numeroCuota;
-
-      nota.write(' Mes $mesActualEnPeriodo de $totalMesesPeriodo'
-          ' del período vigente (cuotas $desde–$hasta).');
-
-      if (restantes == 0) {
-        nota.write(' Última cuota de este período.');
-      } else {
-        nota.write(
-            ' Faltan $restantes mes${restantes == 1 ? '' : 'es'}'
-            ' para el cambio de período.');
+      if (numeroCuota == hasta) {
+        if (nota.isNotEmpty) nota.write('\n');
+        nota.write('RECUERDE QUE HABRÁ UN INCREMENTO EN EL PRÓXIMO PERIODO');
       }
-
-      // ── Próximo período ────────────────────────────────────
-      if (siguientePeriodo != null) {
-        final sigMonto = (siguientePeriodo['monto'] as num).toDouble();
-        final sigPct = (siguientePeriodo['porcentaje'] as num?)?.toDouble() ?? 0;
-        final sigDesde = siguientePeriodo['cuota_desde'] as int;
-        final sigHasta = siguientePeriodo['cuota_hasta'] as int;
-        nota.write(' Próximo período: cuotas $sigDesde–$sigHasta,'
-            ' monto \$${sigMonto.toStringAsFixed(0)}');
-        if (sigPct > 0) {
-          nota.write(' (+${sigPct.toStringAsFixed(1)}%)');
-        }
-        nota.write('.');
-      }
-    } else {
-      // Cuota fuera de todos los períodos definidos: usar último período
-      // como referencia y avisar.
-      final ultimo = periodosData.last;
-      final ultHasta = ultimo['cuota_hasta'] as int;
-      final ultMonto = (ultimo['monto'] as num).toDouble();
-      nota.write(' Fuera de los períodos definidos'
-          ' (el último llega hasta cuota $ultHasta).'
-          ' Monto de referencia: \$${ultMonto.toStringAsFixed(0)}.');
     }
 
     return (descripcion: desc, notaPeriodo: nota.toString());
+  }
+
+  static const _nombresMeses = [
+    '', 'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+    'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic',
+  ];
+
+  String _calcularMesCuota(int mesEmision) {
+    final now = DateTime.now();
+    return '${_nombresMeses[mesEmision.clamp(1, 12)]} ${now.year}';
   }
 
   @override
@@ -268,15 +245,21 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
 
     final direccion = c['propiedad_direccion'] as String? ?? '';
     final localidad = c['propiedad_localidad'] as String? ?? '';
+    final mesEmision = (c['mes_emision'] as int?) ?? 1;
 
-    // Descripción y nota de período con mes numérico
+    // Descripción y nota de período
     final now = DateTime.now();
     final (:descripcion, :notaPeriodo) = _generarNotaPeriodo(
       numeroCuota: numeroCuota,
+      cuotasTotal: cuotasTotal,
       fechaEmision: now,
       periodosData: periodosData,
+      mesEmision: mesEmision,
     );
     final desc = descripcion;
+
+    // Calcular fecha de la cuota (mes en letra + año)
+    final fechaCuota = _calcularMesCuota(mesEmision);
 
     setState(() {
       _contratoSel = c;
@@ -302,6 +285,7 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
         filaAlquiler.monto = monto;
         filaAlquiler.montoCtrl.text = monto.toStringAsFixed(0);
       }
+      filaAlquiler.fechaCuota = fechaCuota;
       _servicios.add(filaAlquiler);
 
       // Pre-cargar servicios del último recibo (excepto el alquiler principal)
@@ -315,6 +299,7 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
         fila.monto = (sp['monto'] as num?)?.toDouble() ?? 0;
         fila.montoCtrl.text = fila.monto.toStringAsFixed(0);
         fila.fechaVence = sp['fecha_vence'] as String?;
+        fila.fechaCuota = fechaCuota;
         _servicios.add(fila);
       }
 
@@ -355,6 +340,7 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
               punitorios: sinPunitorios ? 0 : s.punitorios,
               total: sinPunitorios ? s.monto : s.total,
               fechaVence: s.fechaVence,
+              fechaCuota: s.fechaCuota,
             ))
         .toList();
     final montoTotalSP =
@@ -429,6 +415,11 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
             'fecha_vence': s.fechaVence,
           });
         }
+      }
+      // Avanzar mes_emision del contrato al siguiente mes (12 -> 1)
+      final cid = _contratoSel?['id'] as int?;
+      if (cid != null) {
+        await _db.avanzarMesEmisionContrato(cid);
       }
       recibo = _buildReciboModel(reciboId: reciboId);
     } catch (e) {
@@ -528,25 +519,29 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
 
     // Nota automática con períodos
     final periodosData = await _db.obtenerPeriodosPorContrato(contratoId);
+    final mesEmision = (_contratoSel!['mes_emision'] as int?) ?? 1;
     final (:descripcion, :notaPeriodo) = _generarNotaPeriodo(
       numeroCuota: nuevaCuota,
+      cuotasTotal: _cuotasTotal,
       fechaEmision: nuevaEmision,
       periodosData: periodosData,
+      mesEmision: mesEmision,
     );
     final desc = descripcion;
+    final fechaCuota = _calcularMesCuota(mesEmision);
 
     setState(() {
       _fechaEmision = nuevaEmision;
       _fechaVencimiento = nuevaVenc;
       _numeroCuota = nuevaCuota;
       _numeroRecibo = nuevoNumRecibo;
-      _montoAbonadoCtrl.text = '0';
       _notasReciboCtrl.text = notaPeriodo;
 
       // Actualizar primer servicio con el nuevo monto y descripción
       if (_servicios.isNotEmpty) {
         _servicios.first.descripcion = desc;
         _servicios.first.descripcionCtrl.text = desc;
+        _servicios.first.fechaCuota = fechaCuota;
         if (nuevoMonto > 0) {
           _servicios.first.monto = nuevoMonto;
           _servicios.first.montoCtrl.text = nuevoMonto.toStringAsFixed(0);
@@ -2152,6 +2147,7 @@ class _FilaServicio {
   double monto = 0;
   double punitorios = 0;
   String? fechaVence;
+  String? fechaCuota;
   double get total => monto + punitorios;
 
   EfectoConcepto efectoInq = EfectoConcepto.sinEfecto;

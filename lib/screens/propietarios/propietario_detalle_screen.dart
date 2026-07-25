@@ -616,9 +616,6 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
     final fechaVencimiento =
         _formatearFecha(r['fecha_vencimiento'] as String? ?? '');
     final montoTotal = (r['monto_total'] as num?)?.toDouble() ?? 0.0;
-    final montoAbonado = (r['monto_abonado'] as num?)?.toDouble() ?? 0.0;
-    final saldo = (r['saldo'] as num?)?.toDouble() ?? 0.0;
-    final estado = r['estado'] as String? ?? 'pendiente';
     final reciboId = r['id'] as int;
 
     final notasRecibo = r['notas_recibo'] as String?;
@@ -626,9 +623,6 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
     final alertarInquilino = (r['alertar_inquilino'] as int? ?? 0) == 1;
     final alertarPropietario = (r['alertar_propietario'] as int? ?? 0) == 1;
     final tieneAlertas = alertarInquilino || alertarPropietario;
-
-    final colorEstado = _colorEstado(estado);
-    final labelEstado = _labelEstado(estado);
 
     final fmt = NumberFormat.currency(
         locale: 'es_AR', symbol: '\$', decimalDigits: 0, customPattern: '\u00A4#,##0');
@@ -648,60 +642,31 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
         child: Row(
           children: [
             // ── Número de recibo ──
-            Column(
-              children: [
-                Container(
-                  width: 68,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 6),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFC2185B).withOpacity(0.08),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Column(
-                    children: [
-                      const Text(
-                        'N°',
-                        style: TextStyle(
-                            fontSize: 10, color: Color(0xFFC2185B)),
-                      ),
-                      Text(
-                        numeroRecibo.toString().padLeft(4, '0'),
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 15,
-                          color: Color(0xFFC2185B),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: estado == 'pagado'
-                        ? const Color(0xFFC2185B)
-                        : Colors.white,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: estado == 'pagado'
-                          ? const Color(0xFFC2185B)
-                          : const Color(0xFFBDBDBD),
-                    ),
-                  ),
-                  child: Text(
-                    estado == 'pagado' ? 'PAGÓ' : 'NO PAGÓ',
+            Container(
+              width: 68,
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 8, vertical: 6),
+              decoration: BoxDecoration(
+                color: const Color(0xFFC2185B).withOpacity(0.08),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                children: [
+                  const Text(
+                    'N°',
                     style: TextStyle(
-                      fontSize: 7,
+                        fontSize: 10, color: Color(0xFFC2185B)),
+                  ),
+                  Text(
+                    numeroRecibo.toString().padLeft(4, '0'),
+                    style: const TextStyle(
                       fontWeight: FontWeight.bold,
-                      color: estado == 'pagado'
-                          ? Colors.white
-                          : const Color(0xFF424242),
+                      fontSize: 15,
+                      color: Color(0xFFC2185B),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
             const SizedBox(width: 16),
 
@@ -729,20 +694,9 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
             ),
             const SizedBox(width: 16),
 
-            // ── Montos ──
+            // ── Monto ──
             _celdaMonto('Total', fmt.format(montoTotal),
                 const Color(0xFF1565C0)),
-            const SizedBox(width: 12),
-            _celdaMonto('Abonado', fmt.format(montoAbonado),
-                const Color(0xFF2E7D32)),
-            const SizedBox(width: 12),
-            _celdaMonto(
-              'Saldo',
-              fmt.format(saldo),
-              saldo > 0
-                  ? const Color(0xFFC62828)
-                  : const Color(0xFF2E7D32),
-            ),
             const SizedBox(width: 20),
 
             // ── Botones ──
@@ -754,35 +708,6 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
                 padding: const EdgeInsets.symmetric(
                     horizontal: 14, vertical: 10),
                 textStyle: const TextStyle(fontSize: 12),
-              ),
-            ),
-            const SizedBox(width: 10),
-            // Estado: texto clickeable
-            GestureDetector(
-              onTap: () => _cambiarEstadoRecibo(r),
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: estado == 'pagado'
-                      ? const Color(0xFFC2185B)
-                      : Colors.white,
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(
-                    color: estado == 'pagado'
-                        ? const Color(0xFFC2185B)
-                        : const Color(0xFFBDBDBD),
-                  ),
-                ),
-                child: Text(
-                  estado == 'pagado' ? 'PAGÓ' : 'NO PAGÓ',
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    color: estado == 'pagado'
-                        ? Colors.white
-                        : const Color(0xFF424242),
-                  ),
-                ),
               ),
             ),
             const SizedBox(width: 6),
@@ -1035,77 +960,6 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
     }
   }
 
-  Future<void> _cambiarEstadoRecibo(Map<String, dynamic> r) async {
-    final reciboId = r['id'] as int;
-    final estadoActual = r['estado'] as String? ?? 'pendiente';
-    final numero =
-        (r['numero_recibo'] as int? ?? 0).toString().padLeft(4, '0');
-    final montoTotal = (r['monto_total'] as num?)?.toDouble() ?? 0.0;
-    final fmt = NumberFormat.currency(
-        locale: 'es_AR', symbol: '\$', decimalDigits: 0, customPattern: '\u00A4#,##0');
-
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Cambiar Estado'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Recibo N° $numero',
-                style: const TextStyle(fontWeight: FontWeight.bold)),
-            const SizedBox(height: 4),
-            Text('Total: ${fmt.format(montoTotal)}'),
-            const SizedBox(height: 4),
-            Text(
-                'Estado actual: ${_labelEstado(estadoActual)}'),
-            const SizedBox(height: 12),
-            const Text('¿Qué acción querés realizar?'),
-          ],
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, null),
-              child: const Text('Cancelar')),
-          if (estadoActual != 'pagado')
-            ElevatedButton.icon(
-              onPressed: () => Navigator.pop(ctx, 'pagado'),
-              icon: const Icon(Icons.check_circle, size: 14),
-              label: const Text('Marcar Pagado'),
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF2E7D32),
-                  foregroundColor: Colors.white),
-            ),
-          if (estadoActual == 'pagado')
-            OutlinedButton.icon(
-              onPressed: () => Navigator.pop(ctx, 'pendiente'),
-              icon: const Icon(Icons.hourglass_empty, size: 14),
-              label: const Text('Marcar Pendiente'),
-            ),
-        ],
-      ),
-    );
-
-    if (result == null) return;
-
-    if (result == 'pagado') {
-      await _db.actualizarRecibo(reciboId, {
-        'estado': 'pagado',
-        'monto_abonado': montoTotal,
-        'saldo': 0.0,
-      });
-      final tel = _propietario?['telefono'] as String? ?? '';
-      if (tel.isNotEmpty) _abrirWhatsApp(r, esPago: true);
-    } else {
-      await _db.actualizarRecibo(reciboId, {
-        'estado': 'pendiente',
-        'monto_abonado': 0.0,
-        'saldo': montoTotal,
-      });
-    }
-    _cargarDatos();
-  }
-
   void _enviarMensajeWA(Map<String, dynamic> r) =>
       _abrirWhatsApp(r, esPago: false);
 
@@ -1168,28 +1022,6 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
       return DateFormat('dd/MM/yyyy').format(dt);
     } catch (_) {
       return fecha;
-    }
-  }
-
-  Color _colorEstado(String estado) {
-    switch (estado) {
-      case 'pagado':
-        return const Color(0xFF2E7D32);
-      case 'parcial':
-        return const Color(0xFFF57C00);
-      default:
-        return const Color(0xFFC62828);
-    }
-  }
-
-  String _labelEstado(String estado) {
-    switch (estado) {
-      case 'pagado':
-        return 'Pagado';
-      case 'parcial':
-        return 'Parcial';
-      default:
-        return 'Pendiente';
     }
   }
 }

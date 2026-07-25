@@ -403,6 +403,8 @@ class ReciboWidget extends StatelessWidget {
     final fs  = small ? 9.5 : 11.0;
     final fsH = small ? 9.0 : 10.0;
 
+    final tieneFecha = recibo.servicios.any(
+        (s) => s.fechaCuota != null && s.fechaCuota!.isNotEmpty);
     final tieneVence = recibo.servicios.any(
         (s) => s.fechaVence != null && s.fechaVence!.isNotEmpty);
     final fmtVence = DateFormat('dd/MM');
@@ -416,25 +418,13 @@ class ReciboWidget extends StatelessWidget {
         right:            const BorderSide(color: _dark, width: 0.5),
         verticalInside:   const BorderSide(color: Color(0xFFCCCCCC), width: 0.5),
       ),
-      columnWidths: tieneVence
-          ? {
-              0: const FixedColumnWidth(60),
-              1: const FlexColumnWidth(4),
-              2: const FlexColumnWidth(2),
-              3: const FlexColumnWidth(1.5),
-              4: const FlexColumnWidth(2),
-            }
-          : {
-              0: const FlexColumnWidth(4),
-              1: const FlexColumnWidth(2),
-              2: const FlexColumnWidth(1.5),
-              3: const FlexColumnWidth(2),
-            },
+      columnWidths: _buildColumnWidths(tieneFecha: tieneFecha, tieneVence: tieneVence),
       children: [
         // Header
         TableRow(
           decoration: const BoxDecoration(color: Colors.white),
           children: [
+            if (tieneFecha) _th('FECHA', fs: fsH),
             if (tieneVence) _th('VENCE', fs: fsH),
             _th('DESCRIPCIÓN', fs: fsH),
             _th('MONTO', fs: fsH, center: true),
@@ -453,13 +443,15 @@ class ReciboWidget extends StatelessWidget {
           return TableRow(
             decoration: const BoxDecoration(color: Colors.white),
             children: [
+              if (tieneFecha)
+                _td(s.fechaCuota ?? '', fs: fs),
               if (tieneVence)
                 _td(venceStr, fs: fs, center: true),
               _td(s.descripcion, fs: fs),
               _td(_fmtM(s.monto), fs: fs, center: true),
               _td(!recibo.esNeutro && s.punitorios > 0
                   ? _fmtM(s.punitorios)
-                  : (recibo.esNeutro ? '____________' : '—'),
+                  : (recibo.esNeutro ? '____________' : _fmtM(0)),
                   fs: fs, center: true),
               _td(recibo.esNeutro ? '____________' : _fmtM(totalFila),
                   fs: fs, center: true),
@@ -468,6 +460,19 @@ class ReciboWidget extends StatelessWidget {
         }),
       ],
     );
+  }
+
+  Map<int, TableColumnWidth> _buildColumnWidths({
+    required bool tieneFecha, required bool tieneVence}) {
+    int i = 0;
+    final map = <int, TableColumnWidth>{};
+    if (tieneFecha) map[i++] = const FixedColumnWidth(80);
+    if (tieneVence) map[i++] = const FixedColumnWidth(60);
+    map[i++] = const FlexColumnWidth(4);   // Descripción
+    map[i++] = const FlexColumnWidth(2);   // Monto
+    map[i++] = const FlexColumnWidth(1.5); // Punit.
+    map[i++] = const FlexColumnWidth(2);   // Total
+    return map;
   }
 
   Widget _th(String t, {double fs = 9, bool center = false}) => Padding(

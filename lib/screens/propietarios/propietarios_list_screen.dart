@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
 import '../../database/database_helper.dart';
 import '../../utils/snackbar_helper.dart';
 import 'propietario_form_screen.dart';
@@ -178,37 +177,7 @@ class _PropietariosListScreenState extends State<PropietariosListScreen> {
     final inquilino = datos['inquilino_nombre'] as String? ?? 'Sin inquilino';
     final direccion = datos['direccion'] as String? ?? 'Sin dirección';
     final localidad = datos['localidad'] as String? ?? '';
-    final totalPendiente =
-        (datos['total_pendiente'] as num?)?.toDouble() ?? 0.0;
-    final totalCobrado = (datos['total_cobrado'] as num?)?.toDouble() ?? 0.0;
-    final totalRecibos = (datos['total_recibos'] as num?)?.toInt() ?? 0;
     final propietarioId = datos['id'] as int;
-
-    // Estado visual
-    Color estadoColor;
-    String estadoLabel;
-    IconData estadoIcono;
-
-    if (totalPendiente <= 0) {
-      estadoColor = const Color(0xFF2E7D32);
-      estadoLabel = 'Al día';
-      estadoIcono = Icons.check_circle;
-    } else if (totalCobrado > 0) {
-      estadoColor = const Color(0xFFF57C00);
-      estadoLabel = 'Parcial';
-      estadoIcono = Icons.warning_amber_rounded;
-    } else {
-      estadoColor = const Color(0xFFC62828);
-      estadoLabel = 'Deudor';
-      estadoIcono = Icons.cancel;
-    }
-
-    final fmt = NumberFormat.currency(
-      locale: 'es_AR',
-      symbol: '\$',
-      decimalDigits: 0,
-      customPattern: '\u00A4#,##0',
-    );
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -262,66 +231,6 @@ class _PropietariosListScreenState extends State<PropietariosListScreen> {
                       ],
                     ),
                   ),
-                  // Badge estado
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 6, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: estadoColor.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(20),
-                      border:
-                          Border.all(color: estadoColor.withOpacity(0.4)),
-                    ),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(estadoIcono, size: 11, color: estadoColor),
-                        const SizedBox(width: 3),
-                        Text(
-                          estadoLabel,
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: estadoColor,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-
-              // ── Dirección ──────────────────────────────
-              Row(
-                children: [
-                  const Icon(Icons.location_on_outlined,
-                      size: 13, color: Color(0xFF9E9E9E)),
-                  const SizedBox(width: 4),
-                  Expanded(
-                    child: Text(
-                      localidad.isNotEmpty
-                          ? '$direccion, $localidad'
-                          : direccion,
-                      style: const TextStyle(
-                          fontSize: 11, color: Color(0xFF757575)),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-
-              // ── Montos + Botones en una fila ───────────
-              Row(
-                children: [
-                  _infoMontoCompacto(fmt.format(totalCobrado), 'Cobrado', const Color(0xFF2E7D32)),
-                  const SizedBox(width: 6),
-                  _infoMontoCompacto(fmt.format(totalPendiente), 'Pendiente',
-                      totalPendiente > 0 ? const Color(0xFFC62828) : const Color(0xFF2E7D32)),
-                  const SizedBox(width: 6),
-                  _infoMontoCompacto('$totalRecibos', 'Recibos', const Color(0xFF1565C0)),
-                  const Spacer(),
                   InkWell(
                     onTap: () => _irAFormularioEditar(datos),
                     borderRadius: BorderRadius.circular(6),
@@ -352,20 +261,29 @@ class _PropietariosListScreenState extends State<PropietariosListScreen> {
                   ),
                 ],
               ),
+              const SizedBox(height: 4),
+              // ── Dirección ──────────────────────────────
+              Row(
+                children: [
+                  const Icon(Icons.location_on_outlined,
+                      size: 13, color: Color(0xFF9E9E9E)),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      localidad.isNotEmpty
+                          ? '$direccion, $localidad'
+                          : direccion,
+                      style: const TextStyle(
+                          fontSize: 11, color: Color(0xFF757575)),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
             ],
           ),
         ),
       ),
-    );
-  }
-
-  Widget _infoMontoCompacto(String monto, String label, Color color) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(monto, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: color)),
-        Text(label, style: const TextStyle(fontSize: 9, color: Color(0xFF9E9E9E))),
-      ],
     );
   }
 

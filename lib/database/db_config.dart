@@ -14,6 +14,8 @@ class DbConfig {
   String? _rutaPersonalizada;
   double _zoom = 1.0;
   bool _cargado = false;
+  bool _rutaRedNoDisponible = false;
+  String? _ultimaCarpetaSlideshow;
 
   /// Nombre del archivo de configuración
   static const _configFileName = 'db_config.json';
@@ -38,13 +40,25 @@ class DbConfig {
       if (await file.exists()) {
         final json = jsonDecode(await file.readAsString());
         final rutaGuardada = json['ruta_bd'] as String?;
-        // Usar la ruta guardada tal cual, sin validarla.
-        // Si no está accesible al abrir la BD, SQLite fallará con un error
-        // claro en lugar de silenciosamente caer a la base de datos local.
         _rutaPersonalizada = (rutaGuardada != null && rutaGuardada.trim().isNotEmpty)
             ? rutaGuardada.trim()
             : null;
         _zoom = (json['zoom'] as num?)?.toDouble() ?? 1.0;
+        _ultimaCarpetaSlideshow = json['slideshow_folder'] as String?;
+
+        // Validar que la carpeta configurada sigue accesible.
+        // Si no lo está, marcamos el flag pero preservamos la ruta en
+        // _rutaPersonalizada para que el usuario pueda reintentar.
+        if (_rutaPersonalizada != null) {
+          try {
+            final dir = Directory(_rutaPersonalizada!);
+            if (!await dir.exists()) {
+              _rutaRedNoDisponible = true;
+            }
+          } catch (_) {
+            _rutaRedNoDisponible = true;
+          }
+        }
       }
     } catch (_) {
       // Si el archivo de config no se puede leer, simplemente no hay ruta personalizada
@@ -55,7 +69,9 @@ class DbConfig {
   /// Devuelve la ruta completa al archivo .db
   Future<String> obtenerRutaDb() async {
     await cargar();
-    if (_rutaPersonalizada != null && _rutaPersonalizada!.isNotEmpty) {
+    if (_rutaPersonalizada != null &&
+        _rutaPersonalizada!.isNotEmpty &&
+        !_rutaRedNoDisponible) {
       return p.join(_rutaPersonalizada!, _dbFileName);
     }
     // Ruta local por defecto
@@ -67,8 +83,49 @@ class DbConfig {
     return p.join(appDir.path, _dbFileName);
   }
 
+  /// Carpeta donde se exportó el último slideshow (null = nunca)
+  String? get ultimaCarpetaSlideshow => _ultimaCarpetaSlideshow;
+
+  /// Guarda la última carpeta usada para exportar slideshow
+  Future<void> guardarCarpetaSlideshow(String carpeta) async {
+    _ultimaCarpetaSlideshow = carpeta;
+    final path = await _configFilePath;
+    final file = File(path);
+    Map<String, dynamic> config = {};
+    try {
+      if (await file.exists()) {
+        config = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
+      }
+    } catch (_) {}
+    config['slideshow_folder'] = _ultimaCarpetaSlideshow;
+    await file.writeAsString(jsonEncode(config));
+  }
+
   /// Devuelve la carpeta configurada (null = local)
   String? get rutaPersonalizada => _rutaPersonalizada;
+
+  /// true si hay una ruta de red configurada pero la carpeta no está accesible
+  bool get rutaRedNoDisponible => _rutaRedNoDisponible;
+
+  /// La ruta de red configurada, aunque esté inaccesible (null si no hay)
+  String? get rutaRedConfigurada =>
+      (_rutaPersonalizada != null && _rutaPersonalizada!.isNotEmpty)
+          ? _rutaPersonalizada
+          : null;
+
+  /// Reintenta acceder a la carpeta de red. Devuelve true si ahora está disponible.
+  /// Si tiene éxito, limpia el flag y se debe llamar a [DatabaseHelper.reconectar].
+  Future<bool> reintentarConexionRed() async {
+    if (_rutaPersonalizada == null || _rutaPersonalizada!.isEmpty) return false;
+    try {
+      final dir = Directory(_rutaPersonalizada!);
+      if (await dir.exists()) {
+        _rutaRedNoDisponible = false;
+        return true;
+      }
+    } catch (_) {}
+    return false;
+  }
 
   /// Devuelve el zoom guardado (1.0 por defecto)
   double get zoom => _zoom;
@@ -100,6 +157,7 @@ class DbConfig {
     _rutaPersonalizada = (nuevaRuta != null && nuevaRuta.trim().isNotEmpty)
         ? nuevaRuta.trim()
         : null;
+    _rutaRedNoDisponible = false;
     final path = await _configFilePath;
     final file = File(path);
     // Leer config existente para no pisar zoom

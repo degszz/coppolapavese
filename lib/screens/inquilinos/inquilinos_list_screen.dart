@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import '../../database/database_helper.dart';
 import '../../models/inquilino_model.dart';
 import '../../utils/snackbar_helper.dart';
@@ -49,7 +50,7 @@ class _InquilinosListScreenState extends State<InquilinosListScreen> {
 
   Future<void> _refrescoSilencioso() async {
     try {
-      final data = await _db.obtenerInquilinosConDetalle();
+      final data = await _db.obtenerResumenPorInquilino();
       if (mounted) {
         setState(() {
           _inquilinos = data;
@@ -62,7 +63,7 @@ class _InquilinosListScreenState extends State<InquilinosListScreen> {
   Future<void> _cargar() async {
     setState(() => _cargando = true);
     try {
-      final data = await _db.obtenerInquilinosConDetalle();
+      final data = await _db.obtenerResumenPorInquilino();
       setState(() {
         _inquilinos = data;
         _filtrados = data;
@@ -240,20 +241,46 @@ class _InquilinosListScreenState extends State<InquilinosListScreen> {
     final propietario =
         datos['propietario_nombre'] as String? ?? 'Sin propietario';
     final direccion =
-        datos['propiedad_direccion'] as String? ?? 'Sin propiedad';
+        datos['direccion'] as String? ?? 'Sin propiedad';
     final localidad =
-        datos['propiedad_localidad'] as String? ?? '';
+        datos['localidad'] as String? ?? '';
     final telefono = datos['telefono'] as String? ?? '';
     final celular = datos['celular'] as String? ?? '';
     final email = datos['email'] as String? ?? '';
     final id = datos['id'] as int;
     final tieneContrato = datos['contrato_id'] != null;
+    final totalCobrado = (datos['total_cobrado'] as num?)?.toDouble() ?? 0.0;
+    final totalPendiente = (datos['total_pendiente'] as num?)?.toDouble() ?? 0.0;
+    final totalRecibos = (datos['total_recibos'] as num?)?.toInt() ?? 0;
 
     final contacto = celular.isNotEmpty
         ? celular
         : telefono.isNotEmpty
             ? telefono
             : '';
+
+    // Estado visual
+    Color estadoColor;
+    String estadoLabel;
+    IconData estadoIcono;
+    if (totalPendiente <= 0) {
+      estadoColor = const Color(0xFF2E7D32);
+      estadoLabel = 'Al día';
+      estadoIcono = Icons.check_circle;
+    } else if (totalCobrado > 0) {
+      estadoColor = const Color(0xFFF57C00);
+      estadoLabel = 'Parcial';
+      estadoIcono = Icons.warning_amber_rounded;
+    } else {
+      estadoColor = const Color(0xFFC62828);
+      estadoLabel = 'Deudor';
+      estadoIcono = Icons.cancel;
+    }
+
+    final fmt = NumberFormat.currency(
+      locale: 'es_AR', symbol: '\$', decimalDigits: 0,
+      customPattern: '\u00A4#,##0',
+    );
 
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
@@ -305,50 +332,32 @@ class _InquilinosListScreenState extends State<InquilinosListScreen> {
                       ],
                     ),
                   ),
-                  // Badge contrato
+                  // Badge estado
                   Container(
-                    padding:
-                        const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 6, vertical: 3),
                     decoration: BoxDecoration(
-                      color: tieneContrato
-                          ? const Color(0xFF2E7D32).withOpacity(0.1)
-                          : Colors.orange.withOpacity(0.1),
+                      color: estadoColor.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                        color: tieneContrato
-                            ? const Color(0xFF2E7D32).withOpacity(0.4)
-                            : Colors.orange.withOpacity(0.4),
-                      ),
+                      border:
+                          Border.all(color: estadoColor.withOpacity(0.4)),
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(
-                          tieneContrato ? Icons.check_circle : Icons.info_outline,
-                          size: 11,
-                          color: tieneContrato
-                              ? const Color(0xFF2E7D32)
-                              : Colors.orange,
-                        ),
+                        Icon(estadoIcono, size: 11, color: estadoColor),
                         const SizedBox(width: 3),
-                        Text(
-                          tieneContrato ? 'Contrato' : 'Sin contrato',
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: tieneContrato
-                                ? const Color(0xFF2E7D32)
-                                : Colors.orange,
-                          ),
-                        ),
+                        Text(estadoLabel,
+                            style: TextStyle(fontSize: 10,
+                                fontWeight: FontWeight.bold,
+                                color: estadoColor)),
                       ],
                     ),
                   ),
                 ],
               ),
               const SizedBox(height: 6),
-
-              // ── Propiedad + contacto ───────────────────
+              // ── Dirección + contacto ───────────────────
               Row(
                 children: [
                   const Icon(Icons.location_on_outlined,
@@ -374,32 +383,27 @@ class _InquilinosListScreenState extends State<InquilinosListScreen> {
                 ],
               ),
               const SizedBox(height: 6),
-
-              // ── Botones ────────────────────────────────
+              // ── Montos + Botones ───────────────────────
               Row(
-                mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  if (email.isNotEmpty)
-                    Expanded(
-                      child: Row(
-                        children: [
-                          const Icon(Icons.email_outlined,
-                              size: 13, color: Color(0xFF9E9E9E)),
-                          const SizedBox(width: 3),
-                          Expanded(
-                            child: Text(email,
-                                style: const TextStyle(fontSize: 11, color: _gray),
-                                overflow: TextOverflow.ellipsis),
-                          ),
-                        ],
-                      ),
-                    ),
+                  _infoMontoCompacto(fmt.format(totalCobrado), 'Cobrado',
+                      const Color(0xFF2E7D32)),
+                  const SizedBox(width: 6),
+                  _infoMontoCompacto(fmt.format(totalPendiente), 'Pendiente',
+                      totalPendiente > 0
+                          ? const Color(0xFFC62828)
+                          : const Color(0xFF2E7D32)),
+                  const SizedBox(width: 6),
+                  _infoMontoCompacto('$totalRecibos', 'Recibos',
+                      const Color(0xFF1565C0)),
+                  const Spacer(),
                   InkWell(
                     onTap: () => _eliminar(id, nombreCompleto),
                     borderRadius: BorderRadius.circular(6),
                     child: const Padding(
                       padding: EdgeInsets.all(4),
-                      child: Icon(Icons.delete_outline, size: 18, color: Color(0xFFC62828)),
+                      child: Icon(Icons.delete_outline, size: 18,
+                          color: Color(0xFFC62828)),
                     ),
                   ),
                   const SizedBox(width: 4),
@@ -418,7 +422,8 @@ class _InquilinosListScreenState extends State<InquilinosListScreen> {
                       },
                       borderRadius: BorderRadius.circular(6),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
                           color: const Color(0xFF1A3A5C),
                           borderRadius: BorderRadius.circular(6),
@@ -428,7 +433,8 @@ class _InquilinosListScreenState extends State<InquilinosListScreen> {
                           children: [
                             Icon(Icons.receipt_long_outlined, size: 14, color: Colors.white),
                             SizedBox(width: 4),
-                            Text('Recibo', style: TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w500)),
+                            Text('Recibo', style: TextStyle(fontSize: 11,
+                                color: Colors.white, fontWeight: FontWeight.w500)),
                           ],
                         ),
                       ),
@@ -439,7 +445,8 @@ class _InquilinosListScreenState extends State<InquilinosListScreen> {
                     onTap: () => _editar(datos),
                     borderRadius: BorderRadius.circular(6),
                     child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
                       decoration: BoxDecoration(
                         color: _magenta,
                         borderRadius: BorderRadius.circular(6),
@@ -449,7 +456,8 @@ class _InquilinosListScreenState extends State<InquilinosListScreen> {
                         children: [
                           Icon(Icons.edit_outlined, size: 14, color: Colors.white),
                           SizedBox(width: 4),
-                          Text('Editar', style: TextStyle(fontSize: 11, color: Colors.white, fontWeight: FontWeight.w500)),
+                          Text('Editar', style: TextStyle(fontSize: 11,
+                              color: Colors.white, fontWeight: FontWeight.w500)),
                         ],
                       ),
                     ),
@@ -460,6 +468,20 @@ class _InquilinosListScreenState extends State<InquilinosListScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _infoMontoCompacto(String monto, String label, Color color) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(monto,
+            style: TextStyle(
+                fontSize: 11, fontWeight: FontWeight.bold, color: color)),
+        Text(label,
+            style:
+                const TextStyle(fontSize: 9, color: Color(0xFF9E9E9E))),
+      ],
     );
   }
 

@@ -128,8 +128,31 @@ class ProyeccionRecibosService {
       final cuotasTotal = (c['cuotas_total'] as int?) ?? 0;
       final primerDiaPago = (c['primer_dia_pago'] as int?) ?? 1;
       final ultimaEmitida = (c['ultima_cuota_emitida'] as int?) ?? 0;
+      final cuotaInicial = (c['cuota_inicial'] as int?) ?? 0;
 
       if (cuotasTotal <= 0) continue;
+
+      // ── Determinar cuota de arranque ──────────────────────────
+      // Lógica: next = ultimaEmitida + 1, con piso mínimo.
+      // Piso = cuota_inicial manual, o cuota_desde del último período (>1).
+      final nextRecibos = ultimaEmitida + 1;
+
+      // Cargar períodos fijos del contrato (una sola vez)
+      final contratoId = c['id'] as int;
+      final periodos = await _db.obtenerPeriodosPorContrato(contratoId);
+
+      // Determinar piso
+      int piso = 0;
+      if (cuotaInicial > 0) {
+        piso = cuotaInicial;
+      } else if (periodos.length > 1) {
+        piso = (periodos.last['cuota_desde'] as int?) ?? 0;
+      }
+      if (piso == 0) piso = 1;
+
+      final cuotaInicio = nextRecibos > piso ? nextRecibos : piso;
+
+      if (cuotaInicio > cuotasTotal) continue; // contrato completado
       if (ultimaEmitida >= cuotasTotal) continue; // contrato completado
 
       final inqNombre = ((c['inquilino_nombre'] as String?) ?? '').trim();
@@ -137,13 +160,8 @@ class ProyeccionRecibosService {
       final nombreCompleto =
           inqApellido.isNotEmpty ? '$inqNombre $inqApellido'.trim() : inqNombre;
 
-      final contratoId = c['id'] as int;
-
-      // Cargar períodos fijos del contrato para calcular montos por cuota
-      final periodos = await _db.obtenerPeriodosPorContrato(contratoId);
-
-      // Proyectar cuotas pendientes (desde la última emitida + 1)
-      for (int cuota = ultimaEmitida + 1; cuota <= cuotasTotal; cuota++) {
+      // Proyectar cuotas pendientes desde cuotaInicio
+      for (int cuota = cuotaInicio; cuota <= cuotasTotal; cuota++) {
         // Saltar si esta cuota ya existe como recibo emitido
         if (emitidosSet.contains('${contratoId}_$cuota')) continue;
 

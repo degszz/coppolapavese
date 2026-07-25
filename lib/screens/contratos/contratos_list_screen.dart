@@ -15,6 +15,11 @@ class ContratosListScreen extends StatefulWidget {
 }
 
 class _ContratosListScreenState extends State<ContratosListScreen> {
+  static const _mesesAbrev = [
+    'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+    'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic',
+  ];
+
   final _db = DatabaseHelper();
   List<Map<String, dynamic>> _contratos = [];
   List<Map<String, dynamic>> _contratosFiltrados = [];
@@ -741,6 +746,9 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
         (c['_periodos'] as List<Map<String, dynamic>>?) ?? [];
     if (periodos.isEmpty) return [];
 
+    final cuotaActual = c['_cuota_actual'] as int? ?? 0;
+    final mesEmision = (c['_ultimo_mes_recibo'] as int?) ?? DateTime.now().month;
+
     return [
       _seccionTitulo('Periodos Fijos', Icons.calendar_month_outlined),
       const SizedBox(height: 8),
@@ -761,7 +769,7 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
               child: const Row(
                 children: [
                   Expanded(
-                      flex: 2,
+                      flex: 3,
                       child: Text('Cuotas',
                           style: TextStyle(
                               fontSize: 11, fontWeight: FontWeight.w600))),
@@ -771,6 +779,12 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                           style: TextStyle(
                               fontSize: 11, fontWeight: FontWeight.w600),
                           textAlign: TextAlign.right)),
+                  Expanded(
+                      flex: 2,
+                      child: Text('Va por',
+                          style: TextStyle(
+                              fontSize: 11, fontWeight: FontWeight.w600),
+                          textAlign: TextAlign.center)),
                 ],
               ),
             ),
@@ -779,6 +793,19 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
               final desde = p['cuota_desde'] as int? ?? 0;
               final hasta = p['cuota_hasta'] as int? ?? 0;
               final monto = (p['monto'] as num?)?.toDouble() ?? 0.0;
+              final entre = cuotaActual >= desde && cuotaActual <= hasta;
+              final esUltimo = e.key == periodos.length - 1;
+              final multiplesPeriodos = periodos.length > 1;
+
+              // Va por: cuota actual + mes
+              final mesLabel = _mesesAbrev[(mesEmision - 1).clamp(0, 11)];
+              String? vaPorText;
+              if (multiplesPeriodos && esUltimo) {
+                final num = cuotaActual >= desde ? cuotaActual : desde;
+                vaPorText = '$num $mesLabel';
+              } else if (!multiplesPeriodos) {
+                vaPorText = entre ? '$cuotaActual $mesLabel' : null;
+              }
               return Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -790,16 +817,44 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                 child: Row(
                   children: [
                     Expanded(
-                      flex: 2,
-                      child: Text('#$desde — #$hasta',
-                          style: const TextStyle(fontSize: 12)),
+                      flex: 3,
+                      child: Text(
+                          entre
+                              ? '#$desde — #$hasta'
+                              : '#$desde — #$hasta',
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight:
+                                  entre ? FontWeight.w700 : FontWeight.normal,
+                              color: entre
+                                  ? const Color(0xFFC2185B)
+                                  : Colors.black87)),
                     ),
                     Expanded(
                       flex: 2,
                       child: Text(_fmtMonto.format(monto),
-                          style: const TextStyle(
-                              fontSize: 12, fontWeight: FontWeight.w600),
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: entre
+                                  ? FontWeight.w700
+                                  : FontWeight.w600,
+                              color: entre
+                                  ? const Color(0xFFC2185B)
+                                  : Colors.black87),
                           textAlign: TextAlign.right),
+                    ),
+                    Expanded(
+                      flex: 2,
+                      child: Text(
+                          vaPorText ?? '—',
+                          style: TextStyle(
+                              fontSize: 11,
+                              fontWeight:
+                                  vaPorText != null ? FontWeight.w600 : FontWeight.normal,
+                              color: vaPorText != null
+                                  ? const Color(0xFFC2185B)
+                                  : const Color(0xFF9E9E9E)),
+                          textAlign: TextAlign.center),
                     ),
                   ],
                 ),

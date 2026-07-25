@@ -303,6 +303,7 @@ class _InicioTabState extends State<_InicioTab> {
   List<Map<String, dynamic>> _recibosPendientes = [];
   bool _cargando = true;
   Timer? _autoRefresh;
+  bool _mostroDialogoRed = false;
 
   // ── Buscador global ──
   final _busquedaCtrl = TextEditingController();
@@ -338,6 +339,19 @@ class _InicioTabState extends State<_InicioTab> {
     } catch (e) {
       setState(() => _cargando = false);
     }
+    _verificarRedCaida();
+  }
+
+  void _verificarRedCaida() {
+    if (_mostroDialogoRed) return;
+    if (!mounted) return;
+    final config = DbConfig.instance;
+    if (config.rutaRedNoDisponible) {
+      _mostroDialogoRed = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _mostrarDialogoRedCaida();
+      });
+    }
   }
 
   /// Refresco silencioso (sin spinner) para cambios de otro equipo
@@ -348,6 +362,90 @@ class _InicioTabState extends State<_InicioTab> {
         setState(() => _recibosPendientes = pendientes);
       }
     } catch (_) {}
+  }
+
+  Future<void> _mostrarDialogoRedCaida() async {
+    final config = DbConfig.instance;
+    final ruta = config.rutaRedConfigurada ?? '';
+    final resultado = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.cloud_off, color: Color(0xFFC62828)),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text('Carpeta de red no disponible',
+                  style: TextStyle(fontSize: 16)),
+            ),
+          ],
+        ),
+        content: Text(
+          'La base de datos compartida en:\n'
+          '$ruta\n\n'
+          'no está accesible en este momento.\n\n'
+          'La app está usando la base de datos local mientras tanto.\n'
+          'Los cambios que hagas acá NO se verán en las otras PCs.',
+          style: const TextStyle(fontSize: 13, height: 1.4),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'local'),
+            child: const Text('Usar local por ahora'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, 'configurar'),
+            child: const Text('Configurar ruta'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, 'reintentar'),
+            child: const Text('Reintentar conexión'),
+          ),
+        ],
+        actionsOverflowAlignment: OverflowBarAlignment.center,
+      ),
+    );
+
+    if (!mounted) return;
+
+    switch (resultado) {
+      case 'reintentar':
+        final ok = await config.reintentarConexionRed();
+        if (ok) {
+          await _db.reconectar();
+          await _cargarEstadisticas();
+          if (mounted) {
+            mostrarNotificacion(context,
+                texto: 'Conexión restablecida. Usando base compartida.',
+                color: const Color(0xFF2E7D32));
+          }
+        } else {
+          _mostroDialogoRed = false;
+          if (mounted) {
+            mostrarNotificacion(context,
+                texto: 'La carpeta sigue sin estar disponible.',
+                color: const Color(0xFFC62828));
+          }
+        }
+        break;
+      case 'configurar':
+        _mostroDialogoRed = false;
+        if (mounted) {
+          await Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const ConfigRedScreen()),
+          );
+          // Al volver de config, recargar todo
+          await _db.reconectar();
+          await _cargarEstadisticas();
+        }
+        break;
+      case 'local':
+      default:
+        // Usuario eligió seguir con local
+        break;
+    }
   }
 
   Future<void> _buscar(String query) async {
@@ -935,23 +1033,15 @@ class _InicioTabState extends State<_InicioTab> {
             ? inqNombre
             : '—';
     final saldo = (r['saldo'] as num?)?.toDouble() ?? 0.0;
-    final estado = r['estado'] as String? ?? 'pendiente';
     final reciboId = r['id'] as int;
     final fmt = NumberFormat.currency(
         locale: 'es_AR', symbol: '\$', decimalDigits: 0, customPattern: '\u00A4#,##0');
-
-    final colorEstado = estado == 'parcial'
-        ? const Color(0xFFF57C00)
-        : const Color(0xFFC62828);
-    final labelEstado =
-        estado == 'parcial' ? 'PARCIAL' : 'PENDIENTE';
 
     return Card(
       margin: EdgeInsets.zero,
       elevation: 0,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(10),
-        side: BorderSide(color: colorEstado.withOpacity(0.3)),
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -961,7 +1051,6 @@ class _InicioTabState extends State<_InicioTab> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ── Fila superior: N° + badge estado ──
               Row(
                 children: [
                   Container(
@@ -979,27 +1068,9 @@ class _InicioTabState extends State<_InicioTab> {
                           color: Color(0xFFC2185B)),
                     ),
                   ),
-                  const Spacer(),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 6, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: colorEstado.withOpacity(0.1),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      labelEstado,
-                      style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.bold,
-                          color: colorEstado),
-                    ),
-                  ),
                 ],
               ),
               const SizedBox(height: 6),
-
-              // ── Nombre inquilino ──
               Text(
                 nombre,
                 style: const TextStyle(
@@ -1008,8 +1079,6 @@ class _InicioTabState extends State<_InicioTab> {
                 maxLines: 1,
               ),
               const SizedBox(height: 2),
-
-              // ── Saldo ──
               Text(
                 fmt.format(saldo),
                 style: const TextStyle(
@@ -1018,37 +1087,22 @@ class _InicioTabState extends State<_InicioTab> {
                     color: Color(0xFF212121)),
               ),
               const SizedBox(height: 8),
-
-              // ── Botones: toggle + WA + eliminar ──
               Row(
                 children: [
-                  Expanded(
-                    child: GestureDetector(
-                      onTap: () => _accionEstado(r),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(vertical: 5),
-                        decoration: BoxDecoration(
-                          color: estado == 'pagado'
-                              ? const Color(0xFFC2185B)
-                              : Colors.white,
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: estado == 'pagado'
-                                ? const Color(0xFFC2185B)
-                                : const Color(0xFFBDBDBD),
-                          ),
-                        ),
-                        child: Text(
-                          estado == 'pagado' ? 'PAGÓ' : 'NO PAGÓ',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 10,
-                            fontWeight: FontWeight.bold,
-                            color: estado == 'pagado'
-                                ? Colors.white
-                                : const Color(0xFF424242),
-                          ),
-                        ),
+                  SizedBox(
+                    width: 32,
+                    height: 32,
+                    child: IconButton(
+                      padding: EdgeInsets.zero,
+                      onPressed: () => _accionEstado(r),
+                      icon: const Icon(Icons.check_circle_outline, size: 16),
+                      color: const Color(0xFF2E7D32),
+                      tooltip: 'Marcar como pagado',
+                      style: IconButton.styleFrom(
+                        backgroundColor:
+                            const Color(0xFF2E7D32).withOpacity(0.08),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
                       ),
                     ),
                   ),

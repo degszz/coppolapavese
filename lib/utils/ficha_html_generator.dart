@@ -176,10 +176,10 @@ body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:#f0f0f0;c
 .section-title{font-size:15px;font-weight:700;color:#212121;margin-bottom:12px;display:flex;align-items:center;gap:8px}
 .section-title .material-symbols-outlined{font-size:22px;color:#C2185B}
 .ambientes-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px}
-.ambiente-card{display:flex;flex-direction:column;align-items:center;gap:6px;background:#FCE4EC;padding:14px 10px;border-radius:14px;text-align:center;transition:transform .15s}
+.ambiente-card{display:flex;flex-direction:column;align-items:center;gap:6px;background:#FCE4EC;padding:16px 12px;border-radius:14px;text-align:center;transition:transform .15s}
 .ambiente-card:hover{transform:translateY(-2px)}
 .ambiente-icon{font-size:32px;color:#C2185B}
-.ambiente-label{font-size:12px;font-weight:600;color:#880E4F}
+.ambiente-label{font-size:14px;font-weight:600;color:#880E4F}
 
 /* Servicios */
 .servicios-list{list-style:none;display:grid;grid-template-columns:1fr 1fr;gap:8px}
@@ -213,9 +213,9 @@ body{font-family:'Inter',system-ui,-apple-system,sans-serif;background:#f0f0f0;c
   .spec-icon{font-size:30px}
   .spec-value{font-size:22px}
   .spec-label{font-size:13px}
-  .ambiente-card{padding:16px 12px}
+  .ambiente-card{padding:18px 14px}
   .ambiente-icon{font-size:36px}
-  .ambiente-label{font-size:13px}
+  .ambiente-label{font-size:15px}
   .operation{font-size:40px}
   .direccion-line{font-size:16px}
   .section-title{font-size:16px}

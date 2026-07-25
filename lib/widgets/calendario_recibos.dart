@@ -907,6 +907,26 @@ class _CalendarioMesDialogState extends State<CalendarioMesDialog> {
     return total;
   }
 
+  int get _pendientesDelMes {
+    int total = 0;
+    _eventos.forEach((k, v) {
+      if (k.year == _mesVisible.year && k.month == _mesVisible.month) {
+        total += v.where((e) => !e.emitido).length;
+      }
+    });
+    return total;
+  }
+
+  int get _emitidosDelMes {
+    int total = 0;
+    _eventos.forEach((k, v) {
+      if (k.year == _mesVisible.year && k.month == _mesVisible.month) {
+        total += v.where((e) => e.emitido).length;
+      }
+    });
+    return total;
+  }
+
   void _mesAnterior() {
     setState(() {
       _mesVisible = DateTime(_mesVisible.year, _mesVisible.month - 1, 1);
@@ -976,23 +996,45 @@ class _CalendarioMesDialogState extends State<CalendarioMesDialog> {
             ),
           ),
           const Spacer(),
-          if (_totalDelMes > 0)
-            Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: _magenta,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                '$_totalDelMes ${_totalDelMes == 1 ? 'recibo' : 'recibos'} este mes',
-                style: const TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.white,
+          if (_totalDelMes > 0) ...[
+            if (_pendientesDelMes > 0)
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: _magenta,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Text(
+                  '$_pendientesDelMes ${_pendientesDelMes == 1 ? 'pendiente' : 'pendientes'}',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.white,
+                  ),
                 ),
               ),
-            ),
+            if (_emitidosDelMes > 0)
+              Padding(
+                padding: EdgeInsets.only(left: _pendientesDelMes > 0 ? 6 : 0),
+                child: Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF2E7D32),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '$_emitidosDelMes ${_emitidosDelMes == 1 ? 'emitido' : 'emitidos'}',
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+          ],
           const SizedBox(width: 8),
           IconButton(
             icon: const Icon(Icons.close, size: 18),

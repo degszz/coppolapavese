@@ -25,6 +25,11 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
   static const _magenta = Color(0xFFC2185B);
   static const _navy = Color(0xFF1A3A5C);
 
+  static const _mesesAbrev = [
+    'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+    'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic',
+  ];
+
   final DatabaseHelper _db = DatabaseHelper();
   bool _guardando = false;
 
@@ -53,6 +58,12 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
   final _hastaCuotaCtrl = TextEditingController(text: '12');
   final _porcentajeCtrl = TextEditingController(text: '');
   List<PeriodoFijoModel> _periodosFijos = [];
+
+  /// Cuota inicial manual (vacío = automático)
+  final _cuotaInicialCtrl = TextEditingController(text: '');
+
+  /// Mes de emisión por defecto (1=Ene … 12=Dic)
+  int _mesEmisionSel = DateTime.now().month;
 
   /// Filas extra de períodos (desde el 2do en adelante)
   List<_PeriodoRow> _periodosExtra = [];
@@ -84,6 +95,7 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
     _alquilerCtrl.dispose();
     _hastaCuotaCtrl.dispose();
     _porcentajeCtrl.dispose();
+    _cuotaInicialCtrl.dispose();
     for (final r in _periodosExtra) {
       r.montoCtrl.dispose();
       r.hastaCtrl.dispose();
@@ -150,6 +162,19 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
         _cuotasTotal = d['cuotas_total'] as int? ?? 36;
         _cuotasTotalCtrl.text = _cuotasTotal.toString();
 
+        final cuotaInicial = d['cuota_inicial'] as int? ?? 0;
+        if (cuotaInicial > 0) {
+          _cuotaInicialCtrl.text = cuotaInicial.toString();
+        } else {
+          final cid = d['id'] as int?;
+          if (cid != null) {
+            final numCuota = await _db.obtenerNumCuotaParaContrato(cid);
+            _cuotaInicialCtrl.text = numCuota.toString();
+          }
+        }
+
+        _mesEmisionSel = (d['mes_emision'] as int?) ?? DateTime.now().month;
+
         _alquilerCtrl.text =
             (d['alquiler_primer_periodo'] as num? ?? 0).toString();
         _hastaCuotaCtrl.text =
@@ -183,6 +208,8 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
               .toList();
           // Reconstruir filas extra desde períodos guardados
           _cargarPeriodosEnFilas();
+          // Sincronizar _periodosFijos con controllers
+          _recalcularPeriodos();
           _garantes = (await _db.obtenerGarantesPorContrato(contratoId))
               .map((g) => Map<String, dynamic>.from(g))
               .toList();
@@ -213,7 +240,7 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
       _fechaFin = DateTime(
         _fechaInicio!.year,
         _fechaInicio!.month + _cuotasTotal,
-        _fechaInicio!.day,
+        0, // último día del mes anterior
       );
     });
   }
@@ -296,6 +323,8 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
         'rescindido': _rescindido ? 1 : 0,
         'fecha_rescision': _fechaRescision?.toIso8601String(),
         'fecha_alta': DateTime.now().toIso8601String(),
+        'cuota_inicial': int.tryParse(_cuotaInicialCtrl.text) ?? 0,
+        'mes_emision': _mesEmisionSel,
       };
 
       int contratoId;
@@ -427,14 +456,71 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
     }
   }
 
-  /// Recalcula períodos desde los controllers y genera filas nuevas si hay %
+  /// Sugiere la cuota inicial en base a los períodos cargados.
+  /// Si hay más de un período fijo → devuelve cuota_desde del último
+  /// (los anteriores se dieron por hechos). Si no → devuelve 1.
+  int _cuotaInicialSugerida() {
+    if (_periodosFijos.length > 1) {
+      final ultimo = _periodosFijos.last;
+      if (ultimo.cuotaDesde > 1) return ultimo.cuotaDesde;
+    }
+    return 1;
+  }
+
+  /// Widget para editar la cuota actual dentro del último período.
+  Widget _buildInputCuotaInicial() {
+    final sugerida = _cuotaInicialSugerida();
+    return TextField(
+      controller: _cuotaInicialCtrl,
+      keyboardType: TextInputType.number,
+      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+      decoration: InputDecoration(
+        isDense: true,
+        hintText: '$sugerida',
+        hintStyle: const TextStyle(fontSize: 11, color: Color(0xFFBDBDBD)),
+        contentPadding:
+            const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
+        border: const OutlineInputBorder(),
+      ),
+      style: const TextStyle(fontSize: 12),
+    );
+  }
+
+  /// Dropdown para elegir el mes de emisión por defecto (3 letras).
+  Widget _buildMesDropdown() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: BoxDecoration(
+        border: Border.all(color: const Color(0xFFBDBDBD)),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<int>(
+          value: _mesEmisionSel.clamp(1, 12),
+          isDense: true,
+          style: const TextStyle(fontSize: 12, color: Colors.black87),
+          items: List.generate(12, (i) {
+            final mes = i + 1;
+            return DropdownMenuItem(
+              value: mes,
+              child: Text(_mesesAbrev[i], style: const TextStyle(fontSize: 11)),
+            );
+          }),
+          onChanged: (v) {
+            if (v != null) setState(() => _mesEmisionSel = v);
+          },
+        ),
+      ),
+    );
+  }
+
+  /// Recalcula períodos desde los controllers existentes, sin auto-generar filas.
   void _recalcularPeriodos() {
     final monto1 = double.tryParse(_alquilerCtrl.text) ?? 0;
     final hasta1 = int.tryParse(_hastaCuotaCtrl.text) ?? 0;
     final pct1 = double.tryParse(_porcentajeCtrl.text) ?? 0;
-    final totalCuotas = _cuotasTotal;
 
-    // Construir lista de períodos
+    // Construir lista de períodos desde los controllers actuales
     List<PeriodoFijoModel> periodos = [];
 
     if (monto1 > 0 && hasta1 > 0) {
@@ -447,23 +533,7 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
       ));
     }
 
-    // Si hay porcentaje en el primer período y aún quedan cuotas, agregar fila extra
-    if (pct1 > 0 && hasta1 < totalCuotas && monto1 > 0) {
-      if (_periodosExtra.isEmpty) {
-        final nuevoMonto = (monto1 * (1 + pct1 / 100));
-        _periodosExtra.add(_PeriodoRow(
-          montoCtrl: TextEditingController(
-              text: nuevoMonto.toStringAsFixed(0)),
-          hastaCtrl: TextEditingController(
-              text: totalCuotas.toString()),
-          porcentajeCtrl: TextEditingController(text: ''),
-          cuotaDesde: hasta1 + 1,
-        ));
-      }
-    }
-
     // Procesar filas extra
-    double montoAnterior = monto1;
     int cuotaAnteriorHasta = hasta1;
 
     for (int i = 0; i < _periodosExtra.length; i++) {
@@ -484,22 +554,6 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
         ));
       }
 
-      // Si hay % y quedan cuotas, agregar siguiente fila
-      if (pctRow > 0 && hastaRow < totalCuotas && montoRow > 0) {
-        if (i == _periodosExtra.length - 1) {
-          final nuevoMonto = (montoRow * (1 + pctRow / 100));
-          _periodosExtra.add(_PeriodoRow(
-            montoCtrl: TextEditingController(
-                text: nuevoMonto.toStringAsFixed(0)),
-            hastaCtrl: TextEditingController(
-                text: totalCuotas.toString()),
-            porcentajeCtrl: TextEditingController(text: ''),
-            cuotaDesde: hastaRow + 1,
-          ));
-        }
-      }
-
-      montoAnterior = montoRow;
       cuotaAnteriorHasta = hastaRow;
     }
 
@@ -934,7 +988,7 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                 ),
                 // Encabezados columnas
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
+                  padding: const EdgeInsets.fromLTRB(12, 8, 4, 4),
                   child: Row(
                     children: const [
                       SizedBox(
@@ -945,7 +999,8 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                                   fontWeight: FontWeight.bold,
                                   color: Color(0xFF757575)))),
                       SizedBox(width: 6),
-                      Expanded(
+                      SizedBox(
+                          width: 150,
                           child: Text('Monto \$',
                               style: TextStyle(
                                   fontSize: 10,
@@ -953,13 +1008,13 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                                   color: Color(0xFF757575)))),
                       SizedBox(width: 6),
                       SizedBox(
-                          width: 75,
+                          width: 80,
                           child: Text('Hasta mes',
                               style: TextStyle(
                                   fontSize: 10,
                                   fontWeight: FontWeight.bold,
                                   color: Color(0xFF757575)))),
-                      SizedBox(width: 6),
+                      SizedBox(width: 4),
                       SizedBox(
                           width: 75,
                           child: Text('% Aumento',
@@ -967,14 +1022,29 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                                   fontSize: 10,
                                   fontWeight: FontWeight.bold,
                                   color: Color(0xFF757575)))),
-                      SizedBox(width: 32),
+                      SizedBox(width: 4),
+                      SizedBox(
+                          width: 50,
+                          child: Text('Va por',
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF757575)))),
+                      SizedBox(width: 4),
+                      SizedBox(
+                          width: 65,
+                          child: Text('Mes',
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF757575)))),
                     ],
                   ),
                 ),
                 const Divider(height: 1),
                 // Período 1 (principal)
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
+                  padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
                   child: Row(
                     children: [
                       SizedBox(
@@ -995,7 +1065,8 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                         ),
                       ),
                       const SizedBox(width: 6),
-                      Expanded(
+                      SizedBox(
+                        width: 150,
                         child: TextField(
                           controller: _alquilerCtrl,
                           keyboardType:
@@ -1009,17 +1080,17 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                             isDense: true,
                             hintText: '50000',
                             contentPadding: EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 8),
+                                horizontal: 6, vertical: 8),
                             border: OutlineInputBorder(),
                           ),
-                          style: const TextStyle(fontSize: 13),
+                          style: const TextStyle(fontSize: 12),
                           onChanged: (_) =>
                               setState(() => _recalcularPeriodos()),
                         ),
                       ),
                       const SizedBox(width: 6),
                       SizedBox(
-                        width: 75,
+                        width: 80,
                         child: TextField(
                           controller: _hastaCuotaCtrl,
                           keyboardType: TextInputType.number,
@@ -1030,15 +1101,15 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                             isDense: true,
                             hintText: '12',
                             contentPadding: EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 8),
+                                horizontal: 6, vertical: 8),
                             border: OutlineInputBorder(),
                           ),
-                          style: const TextStyle(fontSize: 13),
+                          style: const TextStyle(fontSize: 12),
                           onChanged: (_) =>
                               setState(() => _recalcularPeriodos()),
                         ),
                       ),
-                      const SizedBox(width: 6),
+                      const SizedBox(width: 4),
                       SizedBox(
                         width: 75,
                         child: TextField(
@@ -1054,17 +1125,31 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                             isDense: true,
                             hintText: '%',
                             contentPadding: EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 8),
+                                horizontal: 6, vertical: 8),
                             border: OutlineInputBorder(),
                             suffixText: '%',
                             suffixStyle: TextStyle(fontSize: 11),
                           ),
-                          style: const TextStyle(fontSize: 13),
+                          style: const TextStyle(fontSize: 12),
                           onChanged: (_) =>
                               setState(() => _recalcularPeriodos()),
                         ),
                       ),
-                      const SizedBox(width: 32), // espacio para el icono de borrar
+                      const SizedBox(width: 4),
+                      // Va por + Mes (solo cuando no hay filas extra)
+                      if (_periodosExtra.isEmpty) ...[
+                        SizedBox(
+                          width: 50,
+                          child: _buildInputCuotaInicial(),
+                        ),
+                        const SizedBox(width: 4),
+                        SizedBox(
+                          width: 65,
+                          child: _buildMesDropdown(),
+                        ),
+                      ] else ...[
+                        const SizedBox(width: 119),
+                      ],
                     ],
                   ),
                 ),
@@ -1100,7 +1185,8 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                               ),
                             ),
                             const SizedBox(width: 6),
-                            Expanded(
+                            SizedBox(
+                              width: 150,
                               child: TextField(
                                 controller: row.montoCtrl,
                                 keyboardType: const TextInputType
@@ -1113,17 +1199,17 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                                   isDense: true,
                                   contentPadding:
                                       EdgeInsets.symmetric(
-                                          horizontal: 8, vertical: 8),
+                                          horizontal: 6, vertical: 8),
                                   border: OutlineInputBorder(),
                                 ),
-                                style: const TextStyle(fontSize: 13),
+                                style: const TextStyle(fontSize: 12),
                                 onChanged: (_) => setState(
                                     () => _recalcularPeriodos()),
                               ),
                             ),
                             const SizedBox(width: 6),
                             SizedBox(
-                              width: 75,
+                              width: 80,
                               child: TextField(
                                 controller: row.hastaCtrl,
                                 keyboardType: TextInputType.number,
@@ -1134,15 +1220,15 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                                   isDense: true,
                                   contentPadding:
                                       EdgeInsets.symmetric(
-                                          horizontal: 8, vertical: 8),
+                                          horizontal: 6, vertical: 8),
                                   border: OutlineInputBorder(),
                                 ),
-                                style: const TextStyle(fontSize: 13),
+                                style: const TextStyle(fontSize: 12),
                                 onChanged: (_) => setState(
                                     () => _recalcularPeriodos()),
                               ),
                             ),
-                            const SizedBox(width: 6),
+                            const SizedBox(width: 4),
                             SizedBox(
                               width: 75,
                               child: TextField(
@@ -1158,16 +1244,31 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                                   hintText: '%',
                                   contentPadding:
                                       EdgeInsets.symmetric(
-                                          horizontal: 8, vertical: 8),
+                                          horizontal: 6, vertical: 8),
                                   border: OutlineInputBorder(),
                                   suffixText: '%',
                                   suffixStyle: TextStyle(fontSize: 11),
                                 ),
-                                style: const TextStyle(fontSize: 13),
+                                style: const TextStyle(fontSize: 12),
                                 onChanged: (_) => setState(
                                     () => _recalcularPeriodos()),
                               ),
                             ),
+                            const SizedBox(width: 4),
+                            // Va por + Mes (solo última fila)
+                            if (i == _periodosExtra.length - 1) ...[
+                              SizedBox(
+                                width: 50,
+                                child: _buildInputCuotaInicial(),
+                              ),
+                              const SizedBox(width: 4),
+                              SizedBox(
+                                width: 65,
+                                child: _buildMesDropdown(),
+                              ),
+                            ] else ...[
+                              const SizedBox(width: 119),
+                            ],
                             SizedBox(
                               width: 32,
                               child: IconButton(

@@ -6,6 +6,7 @@ class ServicioItemModel {
   final double punitorios;
   final double total;
   final String? fechaVence; // v3: fecha de vencimiento del ítem (yyyy-MM-dd)
+  final String? fechaCuota; // mes en letra + año (ej. "Junio 2026"), solo runtime
 
   ServicioItemModel({
     this.id,
@@ -15,6 +16,7 @@ class ServicioItemModel {
     this.punitorios = 0.0,
     double? total,
     this.fechaVence,
+    this.fechaCuota,
   }) : total = total ?? (monto + punitorios);
 
   Map<String, dynamic> toMap() => {
@@ -36,6 +38,7 @@ class ServicioItemModel {
         punitorios: (map['punitorios'] as num?)?.toDouble() ?? 0.0,
         total: (map['total'] as num).toDouble(),
         fechaVence: map['fecha_vence'] as String?,
+        fechaCuota: map['fecha_cuota'] as String?,
       );
 
   ServicioItemModel copyWith({
@@ -46,6 +49,7 @@ class ServicioItemModel {
     double? punitorios,
     double? total,
     String? fechaVence,
+    String? fechaCuota,
   }) {
     final nuevoMonto = monto ?? this.monto;
     final nuevosPunitorios = punitorios ?? this.punitorios;
@@ -57,6 +61,7 @@ class ServicioItemModel {
       punitorios: nuevosPunitorios,
       total: total ?? (nuevoMonto + nuevosPunitorios),
       fechaVence: fechaVence ?? this.fechaVence,
+      fechaCuota: fechaCuota ?? this.fechaCuota,
     );
   }
 }

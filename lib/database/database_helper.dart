@@ -28,7 +28,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       dbPath,
-      version: 8, // v8: porcentaje en periodos_fijos
+      version: 10, // v10: mes_emision en contratos
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -137,6 +137,10 @@ class DatabaseHelper {
     await _migrarV7(db);
     // tablas v8
     await _migrarV8(db);
+    // tablas v9
+    await _migrarV9(db);
+    // tablas v10
+    await _migrarV10(db);
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -164,6 +168,12 @@ class DatabaseHelper {
     }
     if (oldVersion < 8) {
       await _migrarV8(db);
+    }
+    if (oldVersion < 9) {
+      await _migrarV9(db);
+    }
+    if (oldVersion < 10) {
+      await _migrarV10(db);
     }
   }
 
@@ -252,6 +262,25 @@ class DatabaseHelper {
   Future<void> _migrarV8(Database db) async {
     try {
       await db.execute("ALTER TABLE periodos_fijos ADD COLUMN porcentaje REAL DEFAULT 0");
+    } catch (_) {
+      // columna ya existe
+    }
+  }
+
+  Future<void> _migrarV9(Database db) async {
+    try {
+      await db.execute("ALTER TABLE contratos ADD COLUMN cuota_inicial INTEGER DEFAULT 0");
+    } catch (_) {
+      // columna ya existe
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // MIGRACIÓN v10 — mes_emision en contratos
+  // ════════════════════════════════════════════════════════════════
+  Future<void> _migrarV10(Database db) async {
+    try {
+      await db.execute("ALTER TABLE contratos ADD COLUMN mes_emision INTEGER NOT NULL DEFAULT 1");
     } catch (_) {
       // columna ya existe
     }
@@ -975,6 +1004,42 @@ class DatabaseHelper {
     ''');
   }
 
+  Future<List<Map<String, dynamic>>> obtenerResumenPorInquilino() async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT
+        i.id,
+        i.nombre,
+        i.apellido,
+        i.celular,
+        i.telefono,
+        i.email,
+        p.nombre                        AS propietario_nombre,
+        (SELECT pr.direccion FROM contratos c2
+         LEFT JOIN propiedades pr ON c2.propiedad_id = pr.id
+         WHERE c2.inquilino_id = i.id LIMIT 1)
+                                        AS direccion,
+        (SELECT pr.localidad FROM contratos c2
+         LEFT JOIN propiedades pr ON c2.propiedad_id = pr.id
+         WHERE c2.inquilino_id = i.id LIMIT 1)
+                                        AS localidad,
+        (SELECT c3.id FROM contratos c3 WHERE c3.inquilino_id = i.id LIMIT 1)
+                                        AS contrato_id,
+        (SELECT COUNT(*) FROM recibos r WHERE r.inquilino_id = i.id)
+                                        AS total_recibos,
+        (SELECT COALESCE(SUM(r.monto_total), 0) FROM recibos r WHERE r.inquilino_id = i.id)
+                                        AS total_monto,
+        (SELECT COALESCE(SUM(r.monto_abonado), 0) FROM recibos r WHERE r.inquilino_id = i.id)
+                                        AS total_cobrado,
+        (SELECT COALESCE(SUM(r.saldo), 0) FROM recibos r WHERE r.inquilino_id = i.id)
+                                        AS total_pendiente
+      FROM inquilinos i
+      LEFT JOIN propietarios p ON i.propietario_id = p.id
+      GROUP BY i.id
+      ORDER BY i.nombre ASC, i.apellido ASC
+    ''');
+  }
+
   /// Estadísticas generales para la pantalla de inicio
   Future<Map<String, dynamic>> obtenerEstadisticasGenerales() async {
     final db = await database;
@@ -1347,6 +1412,57 @@ class DatabaseHelper {
         where: 'id = ?', whereArgs: [id]);
   }
 
+  Future<List<Map<String, dynamic>>> obtenerPropiedadesConFicha() async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT
+        pr.*,
+        pf.operacion, pf.precio, pf.moneda, pf.ambientes,
+        pf.dormitorios, pf.banos, pf.cochera,
+        pf.superficie_total, pf.superficie_cubierta,
+        pf.antiguedad, pf.ambientes_lista, pf.servicios_lista,
+        pf.descripcion, pf.ubicacion_ficha
+      FROM propiedades pr
+      INNER JOIN propiedad_fichas pf ON pf.propiedad_id = pr.id
+      ORDER BY pr.direccion ASC
+    ''');
+  }
+
+  Future<List<Map<String, dynamic>>> obtenerPropiedadesConFiltros({
+    String? operacion,
+    bool? tieneFicha,
+  }) async {
+    final db = await database;
+    final condiciones = <String>[];
+    final args = <dynamic>[];
+
+    if (operacion != null && operacion.isNotEmpty) {
+      condiciones.add('pf.operacion = ?');
+      args.add(operacion);
+    }
+
+    String joinTipo = tieneFicha == true ? 'INNER' : 'LEFT';
+    if (tieneFicha == false) {
+      condiciones.add('pf.propiedad_id IS NULL');
+    }
+
+    final sql = '''
+      SELECT pr.*, p.nombre AS propietario_nombre,
+             pf.operacion, pf.precio, pf.moneda, pf.ambientes,
+             pf.dormitorios, pf.banos, pf.cochera,
+             pf.superficie_total, pf.superficie_cubierta,
+             pf.antiguedad, pf.ambientes_lista, pf.servicios_lista,
+             pf.descripcion, pf.ubicacion_ficha
+      FROM propiedades pr
+      LEFT JOIN propietarios p ON pr.propietario_id = p.id
+      $joinTipo JOIN propiedad_fichas pf ON pf.propiedad_id = pr.id
+      ${condiciones.isNotEmpty ? 'WHERE ${condiciones.join(' AND ')}' : ''}
+      ORDER BY pr.direccion ASC
+    ''';
+
+    return await db.rawQuery(sql, args);
+  }
+
   // ════════════════════════════════════════════════════════════════
   // PERIODOS_FIJOS — CRUD
   // ════════════════════════════════════════════════════════════════
@@ -1451,55 +1567,120 @@ class DatabaseHelper {
         i.apellido        AS inquilino_apellido,
         i.celular         AS inquilino_celular,
         i.telefono        AS inquilino_telefono,
-        p.nombre          AS propietario_nombre
+        p.nombre          AS propietario_nombre,
+        COALESCE(
+          (SELECT MAX(numero_cuota) + 1 FROM recibos WHERE contrato_id = c.id),
+          COALESCE(c.cuota_inicial, 1)
+        )                  AS _cuota_actual,
+        c.mes_emision                    AS _ultimo_mes_recibo
       FROM contratos c
       LEFT JOIN propiedades  pr ON c.propiedad_id  = pr.id
       LEFT JOIN inquilinos   i  ON c.inquilino_id  = i.id
       LEFT JOIN propietarios p  ON c.propietario_id = p.id
+      WHERE COALESCE(c.rescindido, 0) = 0
       ORDER BY pr.direccion ASC, i.apellido ASC, i.nombre ASC
     ''');
   }
 
-  /// Número de cuota siguiente para un contrato (COUNT recibos existentes + 1)
+  /// Número de cuota siguiente para un contrato.
+  ///
+  /// Lógica: `MAX(numero_cuota) + 1` contra un piso mínimo.
+  /// El piso se determina así:
+  /// 1. `cuota_inicial` manual del contrato (si > 0)
+  /// 2. Si no, `cuota_desde` del último período fijo (si hay > 1)
+  /// 3. Si no, 1
+  ///
+  /// Esto garantiza que la cuota siempre arranque al menos desde el inicio
+  /// del último período configurado, incluso si hay recibos previos.
   Future<int> obtenerNumCuotaParaContrato(int contratoId) async {
     final db = await database;
-    final result = await db.rawQuery(
-      'SELECT COUNT(*) AS cnt FROM recibos WHERE contrato_id = ?',
+
+    // 1. Máxima cuota emitida → base de la cuenta
+    final res = await db.rawQuery(
+      'SELECT COALESCE(MAX(numero_cuota), 0) AS maximo FROM recibos WHERE contrato_id = ?',
       [contratoId],
     );
-    final cnt = result.first['cnt'] as int? ?? 0;
-    return cnt + 1;
-  }
+    final nextRecibos = (res.first['maximo'] as int? ?? 0) + 1;
 
-  /// Monto del último período cargado del contrato.
-  /// Siempre toma el período más reciente (mayor cuota_hasta).
-  Future<double> obtenerMontoPeriodo(int contratoId, int numeroCuota) async {
-    final db = await database;
-    // Buscar el período fijo que contiene la cuota actual.
-    // Si hay solapamiento (períodos viejos + nuevos para el mismo rango),
-    // el ORDER BY cuota_desde DESC asegura que gane el más reciente.
-    final periodoActual = await db.query(
-      'periodos_fijos',
-      where: 'contrato_id = ? AND cuota_desde <= ? AND cuota_hasta >= ?',
-      whereArgs: [contratoId, numeroCuota, numeroCuota],
-      orderBy: 'cuota_desde DESC',
-      limit: 1,
+    // 2. Obtener cuota_inicial del contrato
+    final contrato = await db.query(
+      'contratos',
+      columns: ['cuota_inicial'],
+      where: 'id = ?',
+      whereArgs: [contratoId],
     );
-    if (periodoActual.isNotEmpty) {
-      return (periodoActual.first['monto'] as num).toDouble();
-    }
-    // Fallback: último período cargado (para cuotas fuera de rango)
-    final ultimoPeriodo = await db.query(
+    final cuotaInicial = contrato.isNotEmpty
+        ? (contrato.first['cuota_inicial'] as int?) ?? 0
+        : 0;
+
+    // 3. Piso base según períodos
+    final periodos = await db.query(
       'periodos_fijos',
       where: 'contrato_id = ?',
       whereArgs: [contratoId],
-      orderBy: 'cuota_hasta DESC',
-      limit: 1,
+      orderBy: 'cuota_desde ASC',
     );
-    if (ultimoPeriodo.isNotEmpty) {
-      return (ultimoPeriodo.first['monto'] as num).toDouble();
+
+    int piso = 1;
+    if (periodos.length > 1) {
+      // Múltiples períodos: arrancar desde el último
+      piso = (periodos.last['cuota_desde'] as int?) ?? 1;
     }
-    // Fallback: alquiler_primer_periodo del contrato
+
+    // 4. cuota_inicial solo puede SUBIR el piso, nunca bajarlo
+    if (cuotaInicial > piso) {
+      piso = cuotaInicial;
+    }
+
+    // 5. El mayor entre la cuenta real y el piso
+    return nextRecibos > piso ? nextRecibos : piso;
+  }
+
+  /// Mes (1‑12) del último recibo emitido para un contrato, o null si no hay.
+  Future<int?> obtenerMesUltimoRecibo(int contratoId) async {
+    final db = await database;
+    final res = await db.rawQuery('''
+      SELECT fecha_emision FROM recibos
+      WHERE contrato_id = ?
+      ORDER BY fecha_emision DESC
+      LIMIT 1
+    ''', [contratoId]);
+    if (res.isEmpty) return null;
+    final fecha = res.first['fecha_emision'] as String?;
+    if (fecha == null || fecha.isEmpty) return null;
+    try {
+      return DateTime.parse(fecha).month;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Avanza mes_emision del contrato al siguiente mes (12 -> 1).
+  /// Se llama después de emitir un recibo para que el próximo
+  /// refleje el mes siguiente automáticamente.
+  Future<void> avanzarMesEmisionContrato(int contratoId) async {
+    final db = await database;
+    await db.rawUpdate(
+      'UPDATE contratos SET mes_emision = CASE WHEN mes_emision >= 12 THEN 1 ELSE mes_emision + 1 END WHERE id = ?',
+      [contratoId],
+    );
+  }
+
+  /// Monto del último período cargado del contrato.
+  /// Sigue la misma lógica que contratos_list_screen._buildCondicionesEconomicas:
+  /// siempre devuelve el monto del último período fijo si existe,
+  /// sino alquiler_primer_periodo del contrato.
+  Future<double> obtenerMontoPeriodo(int contratoId, int numeroCuota) async {
+    final db = await database;
+    final periodos = await db.query(
+      'periodos_fijos',
+      where: 'contrato_id = ?',
+      whereArgs: [contratoId],
+      orderBy: 'cuota_desde ASC',
+    );
+    if (periodos.isNotEmpty) {
+      return (periodos.last['monto'] as num).toDouble();
+    }
     final contrato = await db.query(
       'contratos',
       columns: ['alquiler_primer_periodo'],
@@ -1582,7 +1763,8 @@ class DatabaseHelper {
         (SELECT pf.monto FROM periodos_fijos pf
           WHERE pf.contrato_id = c.id
           ORDER BY pf.cuota_hasta DESC
-          LIMIT 1)                  AS monto_periodo_actual
+          LIMIT 1)                  AS monto_periodo_actual,
+        c.cuota_inicial            AS cuota_inicial
       FROM contratos c
       LEFT JOIN propiedades  pr ON c.propiedad_id  = pr.id
       LEFT JOIN inquilinos   i  ON c.inquilino_id  = i.id
