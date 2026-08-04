@@ -1673,6 +1673,51 @@ class DatabaseHelper {
     );
   }
 
+  /// Sincroniza `mes_emision` del contrato con el último recibo restante.
+  /// Útil al eliminar un recibo: el mes_emision debe apuntar al mes del
+  /// próximo recibo a emitir, que es (mesEmision del último recibo + 1).
+  /// Si no quedan recibos, resetea al mes de `fecha_inicio` del contrato.
+  Future<void> sincronizarMesEmisionContrato(int contratoId) async {
+    final db = await database;
+    final ultimo = await db.rawQuery(
+      'SELECT fecha_emision FROM recibos WHERE contrato_id = ? ORDER BY fecha_emision DESC, id DESC LIMIT 1',
+      [contratoId],
+    );
+    int nuevoMes;
+    if (ultimo.isNotEmpty) {
+      final fechaStr = ultimo.first['fecha_emision'] as String?;
+      if (fechaStr != null && fechaStr.isNotEmpty) {
+        final fecha = DateTime.parse(fechaStr);
+        nuevoMes = fecha.month + 1;
+        if (nuevoMes > 12) nuevoMes = 1;
+      } else {
+        nuevoMes = 1;
+      }
+    } else {
+      final contr = await db.query(
+        'contratos',
+        columns: ['fecha_inicio'],
+        where: 'id = ?',
+        whereArgs: [contratoId],
+        limit: 1,
+      );
+      if (contr.isNotEmpty) {
+        final inicioStr = contr.first['fecha_inicio'] as String?;
+        if (inicioStr != null && inicioStr.isNotEmpty) {
+          nuevoMes = DateTime.parse(inicioStr).month;
+        } else {
+          nuevoMes = 1;
+        }
+      } else {
+        nuevoMes = 1;
+      }
+    }
+    await db.rawUpdate(
+      'UPDATE contratos SET mes_emision = ? WHERE id = ?',
+      [nuevoMes, contratoId],
+    );
+  }
+
   /// Monto del último período cargado del contrato.
   /// Sigue la misma lógica que contratos_list_screen._buildCondicionesEconomicas:
   /// siempre devuelve el monto del último período fijo si existe,

@@ -1,4 +1,4 @@
-// MODIFICADO v4 — recibo_form_screen.dart
+﻿// MODIFICADO v4 — recibo_form_screen.dart
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -16,6 +16,7 @@ class ReciboFormScreen extends StatefulWidget {
   final int? propietarioIdInicial; // legacy — ignored if contratoIdInicial given
   final DateTime? fechaEmisionInicial;
   final DateTime? fechaVencimientoInicial;
+  final int? reciboIdEditar; // modo edición: reedita un recibo existente (mantiene N°)
 
   const ReciboFormScreen({
     super.key,
@@ -23,6 +24,7 @@ class ReciboFormScreen extends StatefulWidget {
     this.propietarioIdInicial,
     this.fechaEmisionInicial,
     this.fechaVencimientoInicial,
+    this.reciboIdEditar,
   });
 
   @override
@@ -87,6 +89,8 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
   }
 
   int _numeroRecibo = 0;
+
+  int? _reciboEditando;
 
   // ── TabController ─────────────────────────────────────────────
   late TabController _tabController;
@@ -194,15 +198,17 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
         _fechaVencimiento = widget.fechaVencimientoInicial!;
       }
     });
+
+    // Modo edición: cargar recibo existente y pisar lo Defaults
+    if (widget.reciboIdEditar != null) {
+      await _cargarParaEdicion(widget.reciboIdEditar!);
+      return;
+    }
+
     // Auto-select: priorizar contratoIdInicial matcheando SOLO contra c['id'].
-    // IMPORTANTE: nunca mezclar contrato_id con propietario_id en el mismo
-    // firstWhere — son IDs de tablas distintas y pueden coincidir
-    // numéricamente, lo que derivaría al contrato equivocado.
     if (contratos.isNotEmpty) {
       Map<String, dynamic>? match;
       if (widget.contratoIdInicial != null) {
-        // Match EXACTO por id de contrato; si no existe (fue borrado,
-        // rescindido, etc.) NO caemos a otro contrato, dejamos sin seleccionar.
         final idBuscar = widget.contratoIdInicial;
         try {
           match = contratos.firstWhere((c) => c['id'] == idBuscar);
@@ -210,8 +216,6 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
           match = null;
         }
       } else if (widget.propietarioIdInicial != null) {
-        // Caso legacy: si solo se pasó propietarioIdInicial, buscamos
-        // el primer contrato de ese propietario.
         final propId = widget.propietarioIdInicial;
         try {
           match = contratos.firstWhere((c) => c['propietario_id'] == propId);
@@ -223,6 +227,88 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
         await _seleccionarContrato(match);
       }
     }
+  }
+
+  /// Carga un recibo existente para edición (mantiene numero_recibo).
+  /// NO recomputa cuota/periodo: respeta los valores que ya tenía el recibo.
+  Future<void> _cargarParaEdicion(int reciboId) async {
+    final datos = await _db.obtenerReciboPorId(reciboId);
+    if (datos == null) {
+      _mostrarError('No se pudo cargar el recibo.');
+      return;
+    }
+    final servicios = await _db.obtenerServiciosPorRecibo(reciboId);
+
+    // Buscar el contrato en _contratos por id
+    final contratoId = datos['contrato_id'] as int?;
+    Map<String, dynamic>? contratoMatch;
+    if (contratoId != null) {
+      try {
+        contratoMatch = _contratos.firstWhere((c) => c['id'] == contratoId);
+      } catch (_) {
+        contratoMatch = null;
+      }
+    }
+
+    // Build inquilino name
+    String? inquilinoNombre;
+    if (contratoMatch != null) {
+      final inqNombre = contratoMatch['inquilino_nombre'] as String? ?? '';
+      final inqApellido = contratoMatch['inquilino_apellido'] as String? ?? '';
+      final inqCompleto =
+          inqApellido.isNotEmpty ? '$inqNombre $inqApellido' : inqNombre;
+      inquilinoNombre = inqCompleto.isNotEmpty ? inqCompleto : null;
+    } else {
+      inquilinoNombre = datos['inquilino_nombre'] as String?;
+    }
+
+    // Parar fechas
+    DateTime fechaEmis = DateTime.now();
+    DateTime fechaVenc = DateTime.now().add(const Duration(days: 10));
+    try { fechaEmis = DateTime.parse(datos['fecha_emision'] as String); } catch (_) {}
+    try { fechaVenc = DateTime.parse(datos['fecha_vencimiento'] as String? ?? ''); } catch (_) {}
+
+    final montoAbonado = (datos['monto_abonado'] as num?)?.toDouble() ?? 0;
+    final usuario = datos['usuario'] as String? ?? '';
+    final notas = datos['notas'] as String? ?? '';
+
+    setState(() {
+      _reciboEditando = reciboId;
+      _numeroRecibo = datos['numero_recibo'] as int? ?? _numeroRecibo;
+      _contratoSel = contratoMatch;
+      _propietarioId = datos['propietario_id'] as int?;
+      _propietarioNombre = contratoMatch?['propietario_nombre'] as String?;
+      _inquilinoId = datos['inquilino_id'] as int?;
+      _inquilinoNombre = inquilinoNombre;
+      _numeroCuota = (datos['numero_cuota'] as int?) ?? 1;
+      _cuotasTotal = (contratoMatch?['cuotas_total'] as int?) ?? 0;
+      _domicilioCtrl.text = contratoMatch?['propiedad_direccion'] as String? ?? '';
+      _localidadCtrl.text = contratoMatch?['propiedad_localidad'] as String? ?? '';
+      _fechaEmision = fechaEmis;
+      _fechaVencimiento = fechaVenc;
+      _montoAbonadoCtrl.text = montoAbonado.toStringAsFixed(0);
+      _usuarioCtrl.text = usuario;
+      _notasReciboCtrl.text = notas;
+
+      // Limpiar servicios previos y cargar los del recibo
+      for (final s in _servicios) { s.dispose(); }
+      _servicios.clear();
+      for (final sp in servicios) {
+        final fila = _FilaServicio();
+        final spDesc = sp['descripcion'] as String? ?? '';
+        fila.descripcion = spDesc;
+        fila.descripcionCtrl.text = spDesc;
+        fila.monto = (sp['monto'] as num?)?.toDouble() ?? 0;
+        fila.montoCtrl.text = fila.monto.toStringAsFixed(0);
+        fila.punitorios = (sp['punitorios'] as num?)?.toDouble() ?? 0;
+        fila.punitioriosCtrl.text = fila.punitorios.toStringAsFixed(0);
+        fila.fechaVence = sp['fecha_vence'] as String?;
+        _servicios.add(fila);
+      }
+      if (_servicios.isEmpty) {
+        _servicios.add(_FilaServicio());
+      }
+    });
   }
 
   Future<void> _seleccionarContrato(Map<String, dynamic> c) async {
@@ -373,7 +459,7 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
 
   // ── Confirmar e Imprimir ──────────────────────────────────────
   Future<void> _confirmarEImprimir() async {
-    if (_contratoSel == null) {
+    if (_contratoSel == null && _reciboEditando == null) {
       _mostrarError('Seleccioná un contrato antes de continuar.');
       return;
     }
@@ -388,40 +474,76 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
     ReciboModel? recibo;
     try {
       final now = DateTime.now().toIso8601String();
-      final reciboId = await _db.insertarRecibo({
-        'numero_recibo': _numeroRecibo,
-        'propietario_id': _propietarioId ?? 0,
-        'inquilino_id': _inquilinoId,
-        'fecha_emision': DateFormat('yyyy-MM-dd').format(_fechaEmision),
-        'fecha_vencimiento': DateFormat('yyyy-MM-dd').format(_fechaVencimiento),
-        'monto_total': _montoTotal,
-        'monto_abonado': _montoAbonado,
-        'saldo': _saldo,
-        'estado': _estado,
-        'usuario': _usuarioCtrl.text.trim(),
-        'notas': _notasReciboCtrl.text.trim(),
-        'created_at': now,
-        'contrato_id': _contratoSel?['id'],
-        'numero_cuota': _numeroCuota,
-      });
-      for (final s in _servicios) {
-        if (s.descripcion.isNotEmpty) {
-          await _db.insertarServicio({
-            'recibo_id': reciboId,
-            'descripcion': s.descripcion,
-            'monto': s.monto,
-            'punitorios': s.punitorios,
-            'total': s.total,
-            'fecha_vence': s.fechaVence,
-          });
+
+      if (_reciboEditando != null) {
+        // ── MODO EDICIÓN: UPDATE (mantiene numero_recibo) ──
+        await _db.actualizarRecibo(_reciboEditando!, {
+          'propietario_id': _propietarioId ?? 0,
+          'inquilino_id': _inquilinoId,
+          'fecha_emision': DateFormat('yyyy-MM-dd').format(_fechaEmision),
+          'fecha_vencimiento': DateFormat('yyyy-MM-dd').format(_fechaVencimiento),
+          'monto_total': _montoTotal,
+          'monto_abonado': _montoAbonado,
+          'saldo': _saldo,
+          'estado': _estado,
+          'usuario': _usuarioCtrl.text.trim(),
+          'notas': _notasReciboCtrl.text.trim(),
+          'contrato_id': _contratoSel?['id'],
+          'numero_cuota': _numeroCuota,
+        });
+        // Reemplazar servicios: borrar todos y reinsertar
+        await _db.eliminarServiciosPorRecibo(_reciboEditando!);
+        for (final s in _servicios) {
+          if (s.descripcion.isNotEmpty) {
+            await _db.insertarServicio({
+              'recibo_id': _reciboEditando!,
+              'descripcion': s.descripcion,
+              'monto': s.monto,
+              'punitorios': s.punitorios,
+              'total': s.total,
+              'fecha_vence': s.fechaVence,
+            });
+          }
         }
+        // NO avanzar mes_emision en edición
+        recibo = _buildReciboModel(reciboId: _reciboEditando);
+      } else {
+        // ── MODO NUEVO: INSERT original ──
+        final reciboId = await _db.insertarRecibo({
+          'numero_recibo': _numeroRecibo,
+          'propietario_id': _propietarioId ?? 0,
+          'inquilino_id': _inquilinoId,
+          'fecha_emision': DateFormat('yyyy-MM-dd').format(_fechaEmision),
+          'fecha_vencimiento': DateFormat('yyyy-MM-dd').format(_fechaVencimiento),
+          'monto_total': _montoTotal,
+          'monto_abonado': _montoAbonado,
+          'saldo': _saldo,
+          'estado': _estado,
+          'usuario': _usuarioCtrl.text.trim(),
+          'notas': _notasReciboCtrl.text.trim(),
+          'created_at': now,
+          'contrato_id': _contratoSel?['id'],
+          'numero_cuota': _numeroCuota,
+        });
+        for (final s in _servicios) {
+          if (s.descripcion.isNotEmpty) {
+            await _db.insertarServicio({
+              'recibo_id': reciboId,
+              'descripcion': s.descripcion,
+              'monto': s.monto,
+              'punitorios': s.punitorios,
+              'total': s.total,
+              'fecha_vence': s.fechaVence,
+            });
+          }
+        }
+        // Avanzar mes_emision del contrato al siguiente mes (12 -> 1)
+        final cid = _contratoSel?['id'] as int?;
+        if (cid != null) {
+          await _db.avanzarMesEmisionContrato(cid);
+        }
+        recibo = _buildReciboModel(reciboId: reciboId);
       }
-      // Avanzar mes_emision del contrato al siguiente mes (12 -> 1)
-      final cid = _contratoSel?['id'] as int?;
-      if (cid != null) {
-        await _db.avanzarMesEmisionContrato(cid);
-      }
-      recibo = _buildReciboModel(reciboId: reciboId);
     } catch (e) {
       _mostrarError('Error al guardar: $e');
       if (mounted) setState(() => _guardando = false);
@@ -434,7 +556,7 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
     await Navigator.push(
       context,
       MaterialPageRoute(
-        builder: (_) => ReciboPreviewScreen(recibo: recibo!, esNuevo: true),
+        builder: (_) => ReciboPreviewScreen(recibo: recibo!, esNuevo: _reciboEditando == null),
       ),
     );
     if (mounted && Navigator.canPop(context)) {
@@ -745,7 +867,9 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('Recibo N° ${_numeroRecibo.toString().padLeft(4, '0')}'),
+        title: Text(_reciboEditando != null
+            ? 'Editar Recibo N° ${_numeroRecibo.toString().padLeft(4, '0')}'
+            : 'Recibo N° ${_numeroRecibo.toString().padLeft(4, '0')}'),
       ),
       bottomNavigationBar: _barraAcciones(),
       body: Row(

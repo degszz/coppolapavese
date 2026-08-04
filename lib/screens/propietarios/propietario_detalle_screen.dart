@@ -617,6 +617,7 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
         _formatearFecha(r['fecha_vencimiento'] as String? ?? '');
     final montoTotal = (r['monto_total'] as num?)?.toDouble() ?? 0.0;
     final reciboId = r['id'] as int;
+    final contratoId = r['contrato_id'] as int? ?? _contratoSeleccionadoId;
 
     final notasRecibo = r['notas_recibo'] as String?;
     final tieneNotas = notasRecibo != null && notasRecibo.trim().isNotEmpty;
@@ -726,7 +727,7 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
             const SizedBox(width: 2),
             IconButton(
               onPressed: () =>
-                  _confirmarEliminarRecibo(reciboId, numeroRecibo),
+                  _confirmarEliminarRecibo(reciboId, numeroRecibo, contratoId),
               icon: const Icon(Icons.delete_outline, size: 18),
               color: const Color(0xFFC62828),
               tooltip: 'Eliminar recibo',
@@ -933,19 +934,29 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
   // ════════════════════════════════════════════════════════════════
 
   Future<void> _confirmarEliminarRecibo(
-      int reciboId, int numero) async {
-    final confirm = await showDialog<bool>(
+      int reciboId, int numero, int? contratoId) async {
+    // 0 = Cancelar, 1 = Eliminar, 2 = Rehacer (edición)
+    final accion = await showDialog<int>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Eliminar Recibo'),
-        content: Text(
-            '¿Querés eliminar el recibo N° ${numero.toString().padLeft(4, '0')}?\nEsta acción no se puede deshacer.'),
+        title: Text('Recibo N° ${numero.toString().padLeft(4, '0')}'),
+        content: const Text(
+            '¿Eliminar este recibo? Esta acción no se puede deshacer.\n\n'
+            'Si solo querías corregirlo, podés rehacerlo sin borrarlo.'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
+              onPressed: () => Navigator.pop(ctx, 0),
               child: const Text('Cancelar')),
+          OutlinedButton.icon(
+            onPressed: () => Navigator.pop(ctx, 2),
+            icon: const Icon(Icons.edit_outlined, size: 18),
+            label: const Text('Rehacer'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF1565C0),
+            ),
+          ),
           ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
+            onPressed: () => Navigator.pop(ctx, 1),
             style: ElevatedButton.styleFrom(
                 backgroundColor: const Color(0xFFC62828),
                 foregroundColor: Colors.white),
@@ -954,10 +965,32 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
         ],
       ),
     );
-    if (confirm == true) {
+
+    if (accion == 1) {
       await _db.eliminarRecibo(reciboId);
+      if (contratoId != null) {
+        await _db.sincronizarMesEmisionContrato(contratoId);
+      }
       _cargarDatos();
+    } else if (accion == 2) {
+      // Rehacer: abrir formulario en modo edición
+      _abrirEdicion(reciboId);
     }
+  }
+
+  /// Abre el formulario de recibo en modo edición (mantiene numero_recibo).
+  Future<void> _abrirEdicion(int reciboId) async {
+    final resultado = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ReciboFormScreen(
+          reciboIdEditar: reciboId,
+          propietarioIdInicial: widget.propietarioId,
+          contratoIdInicial: _contratoSeleccionadoId,
+        ),
+      ),
+    );
+    if (resultado == true) _cargarDatos();
   }
 
   void _enviarMensajeWA(Map<String, dynamic> r) =>
