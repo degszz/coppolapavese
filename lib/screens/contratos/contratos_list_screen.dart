@@ -864,7 +864,9 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
         children: [
           Text(label,
               style: TextStyle(
-                  fontSize: 10, color: color, fontWeight: FontWeight.w500)),
+                  fontSize: 10, color: color, fontWeight: FontWeight.w500),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis),
           const SizedBox(height: 2),
           Text(valor,
               style: TextStyle(
@@ -1263,12 +1265,16 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
         children: [
           const Icon(Icons.trending_up, size: 18, color: Color(0xFFC2185B)),
           const SizedBox(width: 8),
-          Text(
-            'Va por la cuota #$cuotaActual de $cuotasTotal  ·  $mesLabel',
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: Color(0xFFC2185B),
+          Flexible(
+            child: Text(
+              'Va por la cuota #$cuotaActual de $cuotasTotal  ·  $mesLabel',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFFC2185B),
+              ),
             ),
           ),
         ],
@@ -1373,9 +1379,13 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
         children: [
           Icon(icono, size: 18, color: color),
           const SizedBox(width: 8),
-          Text(texto,
-              style: TextStyle(
-                  fontSize: 13, fontWeight: FontWeight.w600, color: color)),
+          Flexible(
+            child: Text(texto,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                    fontSize: 13, fontWeight: FontWeight.w600, color: color)),
+          ),
         ],
       ),
     );
