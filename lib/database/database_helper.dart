@@ -37,6 +37,8 @@ class DatabaseHelper {
         await db.execute('PRAGMA journal_mode = DELETE');
         // Esperar hasta 10s si la BD está bloqueada por otro equipo
         await db.execute('PRAGMA busy_timeout = 10000');
+        // Mayor durabilidad en red compartida: espera confirmación del OS
+        await db.execute('PRAGMA synchronous = FULL');
       },
     );
   }
@@ -840,6 +842,60 @@ class DatabaseHelper {
     );
   }
 
+  /// Guarda un contrato completo (datos + periodos + garantes) en una
+  /// transacción atómica. Si cualquiera de las 3 operaciones falla
+  /// (ej: red compartida se cae a mitad de guardado), TODO se rollbackea
+  /// y los periodos/garantes existentes NO se borran.
+  ///
+  /// [esEdicion] = true → UPDATE del contrato existente (contratoId ya conocido).
+  /// [esEdicion] = false → INSERT nuevo (devuelve el nuevo id).
+  Future<int> guardarContratoCompleto({
+    required Map<String, dynamic> datos,
+    required List<Map<String, dynamic>> periodos,
+    required List<Map<String, dynamic>> garantes,
+    required bool esEdicion,
+    int? contratoIdExistente,
+  }) async {
+    final db = await database;
+    return await db.transaction((txn) async {
+      late int contratoId;
+
+      if (esEdicion) {
+        contratoId = contratoIdExistente!;
+        await txn.update(
+          'contratos',
+          datos,
+          where: 'id = ?',
+          whereArgs: [contratoId],
+        );
+      } else {
+        contratoId = await txn.insert('contratos', datos);
+      }
+
+      // Upsert periodos fijos (dentro de la misma transacción)
+      await txn.delete('periodos_fijos',
+          where: 'contrato_id = ?', whereArgs: [contratoId]);
+      for (final p in periodos) {
+        await txn.insert('periodos_fijos', {...p, 'contrato_id': contratoId});
+      }
+
+      // Upsert garantes (dentro de la misma transacción)
+      await txn.delete('garantes',
+          where: 'contrato_id = ?', whereArgs: [contratoId]);
+      for (final g in garantes) {
+        await txn.insert('garantes', {
+          'contrato_id': contratoId,
+          'nombre': g['nombre'],
+          'telefono': g['telefono'],
+          'email': g['email'],
+          'tipo_garantia': g['tipo_garantia'] ?? 'recibo_sueldo',
+        });
+      }
+
+      return contratoId;
+    });
+  }
+
   Future<int> eliminarContrato(int id) async {
     final db = await database;
     return await db.delete(
@@ -1568,8 +1624,8 @@ class DatabaseHelper {
         i.celular         AS inquilino_celular,
         i.telefono        AS inquilino_telefono,
         p.nombre          AS propietario_nombre,
-        COALESCE(
-          (SELECT MAX(numero_cuota) + 1 FROM recibos WHERE contrato_id = c.id),
+        MAX(
+          COALESCE((SELECT MAX(numero_cuota) + 1 FROM recibos WHERE contrato_id = c.id), 1),
           COALESCE(c.cuota_inicial, 1)
         )                  AS _cuota_actual,
         c.mes_emision                    AS _ultimo_mes_recibo,

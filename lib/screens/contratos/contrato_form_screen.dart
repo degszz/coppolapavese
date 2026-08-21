@@ -309,7 +309,7 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
         'alquiler_primer_periodo':
             double.tryParse(_alquilerCtrl.text) ?? 0,
         'hasta_cuota': int.tryParse(_hastaCuotaCtrl.text) ?? 12,
-        'extras': 0,
+        'extras': (widget.datosExistentes?['extras'] as num?)?.toDouble() ?? 0,
         'primer_dia_pago':
             int.tryParse(_primerDiaPagoCtrl.text) ?? 1,
         'dias_gracia': int.tryParse(_diasGraciaCtrl.text) ?? 10,
@@ -322,17 +322,13 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
             double.tryParse(_punitoriosFijosCtrl.text) ?? 0,
         'rescindido': _rescindido ? 1 : 0,
         'fecha_rescision': _fechaRescision?.toIso8601String(),
-        'fecha_alta': DateTime.now().toIso8601String(),
         'cuota_inicial': int.tryParse(_cuotaInicialCtrl.text) ?? 0,
         'mes_emision': _mesEmisionSel,
       };
 
-      int contratoId;
-      if (_esEdicion) {
-        contratoId = widget.datosExistentes!['id'] as int;
-        await _db.actualizarContrato(contratoId, datos);
-      } else {
-        contratoId = await _db.insertarContrato(datos);
+      // fecha_alta solo al crear; en edición no se toca
+      if (!_esEdicion) {
+        datos['fecha_alta'] = DateTime.now().toIso8601String();
       }
 
       // Upsert períodos fijos
@@ -344,10 +340,15 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                 'porcentaje': p.porcentaje,
               })
           .toList();
-      await _db.upsertPeriodosFijos(contratoId, periodosMaps);
 
-      // Upsert garantes
-      await _db.upsertGarantes(contratoId, _garantes);
+      // Guardar todo en una transacción atómica
+      final contratoId = await _db.guardarContratoCompleto(
+        datos: datos,
+        periodos: periodosMaps,
+        garantes: _garantes,
+        esEdicion: _esEdicion,
+        contratoIdExistente: _esEdicion ? widget.datosExistentes!['id'] as int : null,
+      );
 
       if (mounted) {
         mostrarNotificacion(context,
