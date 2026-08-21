@@ -3,6 +3,28 @@ import 'package:intl/intl.dart';
 import '../models/recibo_model.dart';
 import '../utils/numero_a_letras.dart';
 
+const _mesesCompletos = [
+  '', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+];
+
+String _normalizarDescripcionAlquiler(
+    String descripcion, int? numeroCuota, String? fechaEmisionIso) {
+  if (!descripcion.toLowerCase().startsWith('alquiler')) return descripcion;
+  if (numeroCuota == null ||
+      fechaEmisionIso == null ||
+      fechaEmisionIso.isEmpty) {
+    return descripcion;
+  }
+  try {
+    final dt = DateTime.parse(fechaEmisionIso);
+    final mes = _mesesCompletos[dt.month.clamp(1, 12)];
+    return 'Alquiler Cuota N°$numeroCuota - $mes ${dt.year}';
+  } catch (_) {
+    return descripcion;
+  }
+}
+
 /// Vista previa del recibo en pantalla — formato ORIGINAL + COPIA en una hoja.
 class ReciboWidget extends StatelessWidget {
   final ReciboModel recibo;
@@ -447,7 +469,8 @@ class ReciboWidget extends StatelessWidget {
                 _td(s.fechaCuota ?? '', fs: fs),
               if (tieneVence)
                 _td(venceStr, fs: fs, center: true),
-              _td(s.descripcion, fs: fs),
+              _td(_normalizarDescripcionAlquiler(
+                  s.descripcion, recibo.numeroCuota, recibo.fechaEmision), fs: fs),
               _td(_fmtM(s.monto), fs: fs, center: true),
               _td(!recibo.esNeutro && s.punitorios > 0
                   ? _fmtM(s.punitorios)

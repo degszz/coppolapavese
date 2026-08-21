@@ -130,7 +130,7 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
     required List<Map<String, dynamic>> periodosData,
     required int mesEmision,
   }) {
-    final fechaCuotaStr = _calcularMesCuota(mesEmision);
+    final fechaCuotaStr = _calcularMesCuota(mesEmision, fechaEmision);
     final desc = fechaCuotaStr.isNotEmpty
         ? 'Alquiler Cuota N°$numeroCuota - $fechaCuotaStr'
         : 'Alquiler Cuota N°$numeroCuota';
@@ -168,13 +168,12 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
   }
 
   static const _nombresMeses = [
-    '', 'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
-    'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic',
+    '', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+    'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
   ];
 
-  String _calcularMesCuota(int mesEmision) {
-    final now = DateTime.now();
-    return '${_nombresMeses[mesEmision.clamp(1, 12)]} ${now.year}';
+  String _calcularMesCuota(int mesEmision, DateTime fechaEmision) {
+    return '${_nombresMeses[mesEmision.clamp(1, 12)]} ${fechaEmision.year}';
   }
 
   @override
@@ -345,7 +344,7 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
     final desc = descripcion;
 
     // Calcular fecha de la cuota (mes en letra + año)
-    final fechaCuota = _calcularMesCuota(mesEmision);
+    final fechaCuota = _calcularMesCuota(mesEmision, now);
 
     setState(() {
       _contratoSel = c;
@@ -650,7 +649,7 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
       mesEmision: mesEmision,
     );
     final desc = descripcion;
-    final fechaCuota = _calcularMesCuota(mesEmision);
+    final fechaCuota = _calcularMesCuota(mesEmision, nuevaEmision);
 
     setState(() {
       _fechaEmision = nuevaEmision;

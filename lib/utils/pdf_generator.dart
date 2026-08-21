@@ -5,6 +5,28 @@ import 'package:intl/intl.dart';
 import '../models/recibo_model.dart';
 import 'numero_a_letras.dart';
 
+const _mesesCompletosPdf = [
+  '', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+];
+
+String _normalizarDescripcionAlquilerPdf(
+    String descripcion, int? numeroCuota, String? fechaEmisionIso) {
+  if (!descripcion.toLowerCase().startsWith('alquiler')) return descripcion;
+  if (numeroCuota == null ||
+      fechaEmisionIso == null ||
+      fechaEmisionIso.isEmpty) {
+    return descripcion;
+  }
+  try {
+    final dt = DateTime.parse(fechaEmisionIso);
+    final mes = _mesesCompletosPdf[dt.month.clamp(1, 12)];
+    return 'Alquiler Cuota N°$numeroCuota - $mes ${dt.year}';
+  } catch (_) {
+    return descripcion;
+  }
+}
+
 class PdfGenerator {
   // Paleta
   static const _darkColor     = PdfColor.fromInt(0xFF000000);
@@ -423,7 +445,8 @@ class PdfGenerator {
             children: [
               if (hasFecha) td(s.fechaCuota ?? '', center: true),
               if (hasFechaVence) td(venceStr, center: true),
-              td(s.descripcion),
+              td(_normalizarDescripcionAlquilerPdf(
+                  s.descripcion, recibo.numeroCuota, recibo.fechaEmision)),
               td(_fmtM(recibo, s.monto), center: true),
               td(!recibo.esNeutro && s.punitorios > 0
                   ? _fmtM(recibo, s.punitorios)
