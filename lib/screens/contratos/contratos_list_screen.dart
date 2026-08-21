@@ -64,7 +64,9 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
         setState(() => _contratos = data);
         _buscar();
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('[refrescoSilencioso] error: $e');
+    }
   }
 
   Future<List<Map<String, dynamic>>> _cargarDatosCompletos() async {
@@ -73,17 +75,34 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
     for (final c in data) {
       final cId = c['id'] as int?;
       if (cId != null) {
-        c['_garantes'] = await _db.obtenerGarantesPorContrato(cId);
-        c['_periodos'] = await _db.obtenerPeriodosPorContrato(cId);
-        c['_conceptos'] = await _db.obtenerConceptosPorContrato(cId);
-        c['_serviciosUltimoRecibo'] = await _db.obtenerServiciosUltimoRecibo(cId);
+        try {
+          c['_garantes'] = await _db.obtenerGarantesPorContrato(cId);
+          c['_periodos'] = await _db.obtenerPeriodosPorContrato(cId);
+          c['_conceptos'] = await _db.obtenerConceptosPorContrato(cId);
+          c['_serviciosUltimoRecibo'] = await _db.obtenerServiciosUltimoRecibo(cId);
+        } catch (e) {
+          debugPrint('[cargarDatosCompletos] contrato $cId falló: $e');
+          c['_garantes'] = <Map<String, dynamic>>[];
+          c['_periodos'] = <Map<String, dynamic>>[];
+          c['_conceptos'] = <Map<String, dynamic>>[];
+          c['_serviciosUltimoRecibo'] = <Map<String, dynamic>>[];
+        }
+      } else {
+        c['_garantes'] = <Map<String, dynamic>>[];
+        c['_periodos'] = <Map<String, dynamic>>[];
+        c['_conceptos'] = <Map<String, dynamic>>[];
+        c['_serviciosUltimoRecibo'] = <Map<String, dynamic>>[];
       }
       // Cargar foto de la propiedad
       final propiedadId = c['propiedad_id'] as int?;
       if (propiedadId != null) {
-        final imgs = await _db.obtenerImagenesPropiedad(propiedadId);
-        if (imgs.isNotEmpty) {
-          c['_foto_propiedad'] = imgs.first['ruta'] as String?;
+        try {
+          final imgs = await _db.obtenerImagenesPropiedad(propiedadId);
+          if (imgs.isNotEmpty) {
+            c['_foto_propiedad'] = imgs.first['ruta'] as String?;
+          }
+        } catch (e) {
+          debugPrint('[cargarDatosCompletos] foto propiedad $propiedadId falló: $e');
         }
       }
     }
