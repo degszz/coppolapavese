@@ -26,6 +26,7 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
   List<Map<String, dynamic>> _contratosFiltrados = [];
   bool _cargando = true;
   final _busquedaCtrl = TextEditingController();
+  final _scrollCtrl = ScrollController();
   Timer? _autoRefresh;
 
   // ID del contrato expandido (null = ninguno)
@@ -54,6 +55,7 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
   void dispose() {
     _autoRefresh?.cancel();
     _busquedaCtrl.dispose();
+    _scrollCtrl.dispose();
     super.dispose();
   }
 
@@ -230,7 +232,7 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
         builder: (_) => ContratoFormScreen(datosExistentes: datos),
       ),
     );
-    if (resultado == true) _cargar();
+    if (resultado == true) _refrescoSilencioso();
   }
 
   @override
@@ -477,6 +479,7 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
               : RefreshIndicator(
                   onRefresh: _cargar,
                   child: ListView.builder(
+                    controller: _scrollCtrl,
                     padding: const EdgeInsets.fromLTRB(8, 8, 8, 100),
                     itemCount: _contratosFiltrados.length,
                     itemBuilder: (context, i) =>
