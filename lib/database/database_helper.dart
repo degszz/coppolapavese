@@ -1646,6 +1646,33 @@ class DatabaseHelper {
     ''');
   }
 
+  /// Devuelve contratos activos (no rescindidos) que ya tienen todas sus
+  /// cuotas emitidas: `_recibos_emitidos >= cuotas_total`.
+  Future<List<Map<String, dynamic>>> obtenerContratosFinalizados() async {
+    final db = await database;
+    return await db.rawQuery('''
+      SELECT
+        c.id,
+        c.cuotas_total,
+        c.fecha_inicio,
+        c.fecha_fin,
+        pr.direccion      AS propiedad_direccion,
+        pr.localidad      AS propiedad_localidad,
+        i.nombre          AS inquilino_nombre,
+        i.apellido        AS inquilino_apellido,
+        p.nombre          AS propietario_nombre,
+        (SELECT COUNT(*) FROM recibos WHERE contrato_id = c.id) AS recibos_emitidos
+      FROM contratos c
+      LEFT JOIN propiedades  pr ON c.propiedad_id  = pr.id
+      LEFT JOIN inquilinos   i  ON c.inquilino_id  = i.id
+      LEFT JOIN propietarios p  ON c.propietario_id = p.id
+      WHERE COALESCE(c.rescindido, 0) = 0
+        AND c.cuotas_total > 0
+        AND (SELECT COUNT(*) FROM recibos WHERE contrato_id = c.id) >= c.cuotas_total
+      ORDER BY pr.direccion ASC
+    ''');
+  }
+
   /// Número de cuota siguiente para un contrato.
   ///
   /// Lógica: `MAX(numero_cuota) + 1` contra un piso mínimo.

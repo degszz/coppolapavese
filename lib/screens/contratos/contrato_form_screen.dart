@@ -1,4 +1,4 @@
-// lib/screens/contratos/contrato_form_screen.dart
+﻿// lib/screens/contratos/contrato_form_screen.dart
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -216,6 +216,46 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
         }
       }
 
+      // Alerta: contrato finalizado (todas las cuotas emitidas)
+      if (_esEdicion && mounted) {
+        final d = widget.datosExistentes!;
+        final emitidos = d['_recibos_emitidos'] as int?;
+        final total = d['cuotas_total'] as int? ?? 0;
+        final resc = (d['rescindido'] as int? ?? 0) == 0;
+        if (total > 0 && emitidos != null && emitidos >= total && resc) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            showDialog(
+              context: context,
+              builder: (ctx) => AlertDialog(
+                title: const Row(
+                  children: [
+                    Icon(Icons.warning_amber, color: Color(0xFFFFA000)),
+                    SizedBox(width: 8),
+                    Text('Contrato finalizado',
+                        style: TextStyle(fontSize: 16)),
+                  ],
+                ),
+                content: Text(
+                  'Este contrato tiene todas sus cuotas emitidas '
+                  '($emitidos de $total).\n\n'
+                  'Si querés continuar, podés ampliar el número de cuotas '
+                  'o crear un nuevo contrato.',
+                  style: const TextStyle(fontSize: 13, height: 1.4),
+                ),
+                actions: [
+                  FilledButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFFC2185B)),
+                    child: const Text('Entendido'),
+                  ),
+                ],
+              ),
+            );
+          });
+        }
+      }
+
       if (mounted) {
         setState(() {
           _propiedades = propiedades;
@@ -342,7 +382,7 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
           .toList();
 
       // Guardar todo en una transacción atómica
-      final contratoId = await _db.guardarContratoCompleto(
+      await _db.guardarContratoCompleto(
         datos: datos,
         periodos: periodosMaps,
         garantes: _garantes,

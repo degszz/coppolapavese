@@ -546,6 +546,9 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
     final colorEstado =
         rescindido ? const Color(0xFFC62828) : const Color(0xFF2E7D32);
     final labelEstado = rescindido ? 'RESCINDIDO' : 'ACTIVO';
+    final finalizado = (c['_recibos_emitidos'] as int? ?? 0) >=
+        (c['cuotas_total'] as int? ?? 0) &&
+        (c['cuotas_total'] as int? ?? 0) > 0;
 
     return Card(
       elevation: expandido ? 4 : 1,
@@ -607,6 +610,22 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                             fontSize: 10,
                             fontWeight: FontWeight.bold)),
                   ),
+                  if (finalizado) ...[
+                    const SizedBox(width: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFA000),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: const Text('FINALIZADO',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                              fontWeight: FontWeight.bold)),
+                    ),
+                  ],
                   const SizedBox(width: 4),
                   Icon(
                     expandido

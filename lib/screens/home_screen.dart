@@ -301,6 +301,7 @@ class _InicioTabState extends State<_InicioTab> {
   final _db = DatabaseHelper();
   final _calendarioKey = GlobalKey<CalendarioRecibosState>();
   List<Map<String, dynamic>> _recibosPendientes = [];
+  List<Map<String, dynamic>> _contratosFinalizados = [];
   bool _cargando = true;
   Timer? _autoRefresh;
   bool _mostroDialogoRed = false;
@@ -332,8 +333,10 @@ class _InicioTabState extends State<_InicioTab> {
     setState(() => _cargando = true);
     try {
       final pendientes = await _db.obtenerRecibosPendientes();
+      final finalizados = await _db.obtenerContratosFinalizados();
       setState(() {
         _recibosPendientes = pendientes;
+        _contratosFinalizados = finalizados;
         _cargando = false;
       });
     } catch (e) {
@@ -358,10 +361,21 @@ class _InicioTabState extends State<_InicioTab> {
   Future<void> _cargarEstadisticasSilencioso() async {
     try {
       final pendientes = await _db.obtenerRecibosPendientes();
+      final finalizados = await _db.obtenerContratosFinalizados();
       if (mounted) {
-        setState(() => _recibosPendientes = pendientes);
+        setState(() {
+          _recibosPendientes = pendientes;
+          _contratosFinalizados = finalizados;
+        });
       }
     } catch (_) {}
+  }
+
+  void _irATabContratos() {
+    final state = context.findAncestorStateOfType<_HomeScreenState>();
+    if (state != null) {
+      state.setState(() => state._indiceActual = 1);
+    }
   }
 
   Future<void> _mostrarDialogoRedCaida() async {
@@ -650,6 +664,47 @@ class _InicioTabState extends State<_InicioTab> {
             ? const Center(child: CircularProgressIndicator())
             : CustomScrollView(
                 slivers: [
+                  // ── Alerta contratos finalizados ──
+                  if (_contratosFinalizados.isNotEmpty)
+                    SliverToBoxAdapter(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                        child: InkWell(
+                          onTap: () => _irATabContratos(),
+                          borderRadius: BorderRadius.circular(8),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFA000).withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                  color: const Color(0xFFFFA000).withOpacity(0.4)),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.warning_amber,
+                                    size: 18, color: Color(0xFFE65100)),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    '${_contratosFinalizados.length} contrato(s) '
+                                    'con todas las cuotas emitidas. '
+                                    'Tocá para revisarlos.',
+                                    style: const TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: Color(0xFFE65100)),
+                                  ),
+                                ),
+                                const Icon(Icons.chevron_right,
+                                    size: 18, color: Color(0xFFE65100)),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
                   // ── Buscador global ──
                   SliverToBoxAdapter(
                     child: Padding(
