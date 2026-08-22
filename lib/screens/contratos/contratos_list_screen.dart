@@ -8,6 +8,26 @@ import 'contrato_form_screen.dart';
 import '../recibos/recibo_form_screen.dart';
 import '../propietarios/propietario_detalle_screen.dart';
 
+const _mesesCompletosContratos = [
+  '', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+];
+
+String _normalizarDescAlquilerContratos(
+    String desc, int? numeroCuota, String? fechaEmisionIso) {
+  if (!desc.toLowerCase().startsWith('alquiler')) return desc;
+  if (numeroCuota == null || fechaEmisionIso == null || fechaEmisionIso.isEmpty) {
+    return desc;
+  }
+  try {
+    final dt = DateTime.parse(fechaEmisionIso);
+    final mes = _mesesCompletosContratos[dt.month.clamp(1, 12)];
+    return 'Alquiler Cuota N°$numeroCuota - $mes ${dt.year}';
+  } catch (_) {
+    return desc;
+  }
+}
+
 class ContratosListScreen extends StatefulWidget {
   const ContratosListScreen({super.key});
 
@@ -1230,7 +1250,11 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
             ),
             ...servicios.asMap().entries.map((e) {
               final sp = e.value;
-              final desc = sp['descripcion'] as String? ?? '';
+              final descRaw = sp['descripcion'] as String? ?? '';
+              final desc = _normalizarDescAlquilerContratos(
+                  descRaw,
+                  c['_ultimo_numero_cuota'] as int?,
+                  c['_ultimo_fecha_emision'] as String?);
               final monto = (sp['monto'] as num?)?.toDouble() ?? 0.0;
               return Container(
                 padding:

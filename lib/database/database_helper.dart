@@ -1633,6 +1633,7 @@ class DatabaseHelper {
         (SELECT COUNT(*) FROM recibos WHERE contrato_id = c.id) AS _recibos_emitidos,
         (SELECT COUNT(*) FROM recibos WHERE contrato_id = c.id AND COALESCE(saldo, 0) > 0) AS _recibos_pendientes,
         (SELECT numero_recibo FROM recibos WHERE contrato_id = c.id ORDER BY id DESC LIMIT 1) AS _ultimo_num_recibo,
+        (SELECT numero_cuota FROM recibos WHERE contrato_id = c.id ORDER BY id DESC LIMIT 1) AS _ultimo_numero_cuota,
         (SELECT fecha_emision FROM recibos WHERE contrato_id = c.id ORDER BY id DESC LIMIT 1) AS _ultimo_fecha_emision,
         (SELECT fecha_vencimiento FROM recibos WHERE contrato_id = c.id ORDER BY id DESC LIMIT 1) AS _ultimo_vencimiento,
         (SELECT COALESCE(saldo, 0) FROM recibos WHERE contrato_id = c.id ORDER BY id DESC LIMIT 1) AS _ultimo_saldo
