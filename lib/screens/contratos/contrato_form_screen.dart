@@ -339,6 +339,10 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
         _cuotasTotal = cuotasFromCtrl;
       }
 
+      // Sincronizar _periodosFijos con los controllers actuales, por si
+      // el último onChanged no llegó a dispararse (igual que _cuotasTotal).
+      _recalcularPeriodos();
+
       final Map<String, dynamic> datos = {
         'propiedad_id': _propiedadSel?.id,
         'inquilino_id': _inquilinoSel?.id,
@@ -564,7 +568,7 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
     // Construir lista de períodos desde los controllers actuales
     List<PeriodoFijoModel> periodos = [];
 
-    if (monto1 > 0 && hasta1 > 0) {
+    if (hasta1 > 0) {
       periodos.add(PeriodoFijoModel(
         contratoId: 0,
         cuotaDesde: 1,
@@ -585,7 +589,7 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
       final hastaRow = int.tryParse(row.hastaCtrl.text) ?? 0;
       final pctRow = double.tryParse(row.porcentajeCtrl.text) ?? 0;
 
-      if (montoRow > 0 && hastaRow > 0) {
+      if (hastaRow > 0) {
         periodos.add(PeriodoFijoModel(
           contratoId: 0,
           cuotaDesde: row.cuotaDesde,
