@@ -92,6 +92,8 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
 
   int? _reciboEditando;
 
+  int? _mesEmisionLocal;
+
   // ── TabController ─────────────────────────────────────────────
   late TabController _tabController;
 
@@ -281,6 +283,7 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
       _inquilinoNombre = inquilinoNombre;
       _numeroCuota = (datos['numero_cuota'] as int?) ?? 1;
       _cuotasTotal = (contratoMatch?['cuotas_total'] as int?) ?? 0;
+      _mesEmisionLocal = fechaEmis.month;
       _domicilioCtrl.text = contratoMatch?['propiedad_direccion'] as String? ?? '';
       _localidadCtrl.text = contratoMatch?['propiedad_localidad'] as String? ?? '';
       _fechaEmision = fechaEmis;
@@ -354,6 +357,7 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
       _inquilinoNombre = inqCompleto.isNotEmpty ? inqCompleto : null;
       _numeroCuota = numeroCuota;
       _cuotasTotal = cuotasTotal;
+      _mesEmisionLocal = mesEmision;
       _domicilioCtrl.text = direccion;
       _localidadCtrl.text = localidad;
       _notasReciboCtrl.text = notaPeriodo;
@@ -632,30 +636,30 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
     // Próxima cuota
     final nuevaCuota = _numeroCuota + 1;
 
+    // Avanzar mes_emision local (12 -> 1)
+    final nuevoMes = (_mesEmisionLocal ?? 1) >= 12 ? 1 : (_mesEmisionLocal ?? 1) + 1;
+
     // Obtener monto del nuevo período
     final nuevoMonto = await _db.obtenerMontoPeriodo(contratoId, nuevaCuota);
 
-    // Nuevo número de recibo
-    final nuevoNumRecibo = await _db.obtenerProximoNumeroRecibo();
-
     // Nota automática con períodos
     final periodosData = await _db.obtenerPeriodosPorContrato(contratoId);
-    final mesEmision = (_contratoSel!['mes_emision'] as int?) ?? 1;
     final (:descripcion, :notaPeriodo) = _generarNotaPeriodo(
       numeroCuota: nuevaCuota,
       cuotasTotal: _cuotasTotal,
       fechaEmision: nuevaEmision,
       periodosData: periodosData,
-      mesEmision: mesEmision,
+      mesEmision: nuevoMes,
     );
     final desc = descripcion;
-    final fechaCuota = _calcularMesCuota(mesEmision, nuevaEmision);
+    final fechaCuota = _calcularMesCuota(nuevoMes, nuevaEmision);
 
     setState(() {
       _fechaEmision = nuevaEmision;
       _fechaVencimiento = nuevaVenc;
       _numeroCuota = nuevaCuota;
-      _numeroRecibo = nuevoNumRecibo;
+      _numeroRecibo = _numeroRecibo + 1;
+      _mesEmisionLocal = nuevoMes;
       _notasReciboCtrl.text = notaPeriodo;
 
       // Actualizar primer servicio con el nuevo monto y descripción
@@ -672,11 +676,91 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
 
     if (mounted) {
       mostrarNotificacion(context,
-          texto: 'Avanzado a cuota $nuevaCuota — $desc',
+          texto: 'Avanzado a cuota $nuevaCuota - $desc',
           color: const Color(0xFF2E7D32));
     }
   }
 
+  // ── Período Anterior ───────────────────────────────────────────
+  Future<void> _periodoAnterior() async {
+    if (_contratoSel == null) {
+      _mostrarError('Seleccioná un contrato');
+      return;
+    }
+
+    if (_numeroCuota <= 1) {
+      _mostrarError('Ya estás en la cuota 1, no se puede retroceder.');
+      return;
+    }
+
+    final contratoId = _contratoSel!['id'] as int;
+
+    // Retroceder fechas un mes
+    DateTime nuevaEmision;
+    DateTime nuevaVenc;
+    try {
+      nuevaEmision = DateTime(
+        _fechaEmision.year,
+        _fechaEmision.month - 1,
+        _fechaEmision.day,
+      );
+      nuevaVenc = DateTime(
+        _fechaVencimiento.year,
+        _fechaVencimiento.month - 1,
+        _fechaVencimiento.day,
+      );
+    } catch (_) {
+      _mostrarError('No se puede retroceder la fecha más.');
+      return;
+    }
+
+    // Cuota anterior
+    final nuevaCuota = _numeroCuota - 1;
+
+    // Retroceder mes_emision local (1 -> 12)
+    final nuevoMes = (_mesEmisionLocal ?? 1) <= 1 ? 12 : (_mesEmisionLocal ?? 1) - 1;
+
+    // Obtener monto del período anterior
+    final nuevoMonto = await _db.obtenerMontoPeriodo(contratoId, nuevaCuota);
+
+    // Nota automática con períodos
+    final periodosData = await _db.obtenerPeriodosPorContrato(contratoId);
+    final (:descripcion, :notaPeriodo) = _generarNotaPeriodo(
+      numeroCuota: nuevaCuota,
+      cuotasTotal: _cuotasTotal,
+      fechaEmision: nuevaEmision,
+      periodosData: periodosData,
+      mesEmision: nuevoMes,
+    );
+    final desc = descripcion;
+    final fechaCuota = _calcularMesCuota(nuevoMes, nuevaEmision);
+
+    setState(() {
+      _fechaEmision = nuevaEmision;
+      _fechaVencimiento = nuevaVenc;
+      _numeroCuota = nuevaCuota;
+      _numeroRecibo = _numeroRecibo > 1 ? _numeroRecibo - 1 : 1;
+      _mesEmisionLocal = nuevoMes;
+      _notasReciboCtrl.text = notaPeriodo;
+
+      // Actualizar primer servicio con el monto y descripción del período anterior
+      if (_servicios.isNotEmpty) {
+        _servicios.first.descripcion = desc;
+        _servicios.first.descripcionCtrl.text = desc;
+        _servicios.first.fechaCuota = fechaCuota;
+        if (nuevoMonto > 0) {
+          _servicios.first.monto = nuevoMonto;
+          _servicios.first.montoCtrl.text = nuevoMonto.toStringAsFixed(0);
+        }
+      }
+    });
+
+    if (mounted) {
+      mostrarNotificacion(context,
+          texto: 'Retrocedido a cuota $nuevaCuota - $desc',
+          color: const Color(0xFF1565C0));
+    }
+  }
   // ── Enviar Aviso ──────────────────────────────────────────────
   Future<void> _enviarAviso() async {
     if (_contratoSel == null) {
@@ -1233,6 +1317,12 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
             icono: Icons.send_outlined,
             label: 'Enviar\naviso',
             onTap: _guardando ? null : _enviarAviso,
+          ),
+          _separadorV(),
+          _botonAccion(
+            icono: Icons.navigate_before,
+            label: 'Anterior\nPeríodo',
+            onTap: _guardando || _numeroCuota <= 1 ? null : _periodoAnterior,
           ),
           _separadorV(),
           _botonAccion(
