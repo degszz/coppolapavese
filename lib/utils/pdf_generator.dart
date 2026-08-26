@@ -13,17 +13,25 @@ const _mesesCompletosPdf = [
 String _normalizarDescripcionAlquilerPdf(
     String descripcion, int? numeroCuota, String? fechaEmisionIso) {
   if (!descripcion.toLowerCase().startsWith('alquiler')) return descripcion;
-  if (numeroCuota == null ||
-      fechaEmisionIso == null ||
-      fechaEmisionIso.isEmpty) {
-    return descripcion;
-  }
+  if (numeroCuota == null) return descripcion;
+  return 'Alquiler Cuota N°$numeroCuota';
+}
+
+String _fmtMesAbrev(String fechaCuota) {
   try {
-    final dt = DateTime.parse(fechaEmisionIso);
-    final mes = _mesesCompletosPdf[dt.month.clamp(1, 12)];
-    return 'Alquiler Cuota N°$numeroCuota - $mes ${dt.year}';
+    final parts = fechaCuota.split(' ');
+    if (parts.length != 2) return fechaCuota;
+    final mesNombre = parts[0];
+    final anio = parts[1];
+    final mesIdx = _mesesCompletosPdf.indexOf(mesNombre);
+    if (mesIdx == -1) return fechaCuota;
+    const mesesAbrev = [
+      '', 'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+      'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic',
+    ];
+    return '${mesesAbrev[mesIdx]} $anio';
   } catch (_) {
-    return descripcion;
+    return fechaCuota;
   }
 }
 
@@ -393,6 +401,17 @@ class PdfGenerator {
         (s) => s.fechaVence != null && s.fechaVence!.isNotEmpty);
     final fmtDate = DateFormat('dd/MM/yyyy');
 
+    // Obtener fecha formateada abreviada para mostrar solo en la primera fila
+    String? fechaDisplay;
+    if (hasFecha) {
+      final firstConFecha = recibo.servicios
+          .where((s) => s.fechaCuota != null && s.fechaCuota!.isNotEmpty)
+          .firstOrNull;
+      if (firstConFecha != null) {
+        fechaDisplay = _fmtMesAbrev(firstConFecha.fechaCuota!);
+      }
+    }
+
     int col(int offset) {
       int c = 0;
       if (hasFecha) c++;
@@ -432,6 +451,7 @@ class PdfGenerator {
         ),
         // Filas de servicios
         ...recibo.servicios.asMap().entries.map((e) {
+          final idx = e.key;
           final s = e.value;
           String venceStr = '';
           if (s.fechaVence != null && s.fechaVence!.isNotEmpty) {
@@ -443,7 +463,7 @@ class PdfGenerator {
           return pw.TableRow(
             decoration: const pw.BoxDecoration(color: PdfColors.white),
             children: [
-              if (hasFecha) td(s.fechaCuota ?? '', center: true),
+              if (hasFecha) td(idx == 0 ? (fechaDisplay ?? '') : '', center: true),
               if (hasFechaVence) td(venceStr, center: true),
               td(_normalizarDescripcionAlquilerPdf(
                   s.descripcion, recibo.numeroCuota, recibo.fechaEmision)),
