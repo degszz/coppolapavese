@@ -3,26 +3,13 @@ import 'package:intl/intl.dart';
 import '../models/recibo_model.dart';
 import '../utils/numero_a_letras.dart';
 
-const _mesesCompletos = [
-  '', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
-];
-
 String _normalizarDescripcionAlquiler(
     String descripcion, int? numeroCuota, String? fechaEmisionIso) {
-  if (!descripcion.toLowerCase().startsWith('alquiler')) return descripcion;
-  if (numeroCuota == null ||
-      fechaEmisionIso == null ||
-      fechaEmisionIso.isEmpty) {
-    return descripcion;
-  }
-  try {
-    final dt = DateTime.parse(fechaEmisionIso);
-    final mes = _mesesCompletos[dt.month.clamp(1, 12)];
-    return 'Alquiler Cuota N°$numeroCuota - $mes ${dt.year}';
-  } catch (_) {
-    return descripcion;
-  }
+  final desc = descripcion.trim();
+  if (!desc.toLowerCase().startsWith('alquiler')) return descripcion;
+  if (numeroCuota == null) return descripcion;
+  // Forzar formato simple aunque la descripción ya traiga mes/año
+  return 'Alquiler Cuota N°$numeroCuota';
 }
 
 /// Vista previa del recibo en pantalla — formato ORIGINAL + COPIA en una hoja.
@@ -431,6 +418,18 @@ class ReciboWidget extends StatelessWidget {
         (s) => s.fechaVence != null && s.fechaVence!.isNotEmpty);
     final fmtVence = DateFormat('dd/MM');
 
+    // Encontrar el índice de la primera fila con fechaCuota
+    int? firstFechaIdx;
+    if (tieneFecha) {
+      for (int i = 0; i < recibo.servicios.length; i++) {
+        if (recibo.servicios[i].fechaCuota != null &&
+            recibo.servicios[i].fechaCuota!.isNotEmpty) {
+          firstFechaIdx = i;
+          break;
+        }
+      }
+    }
+
     return Table(
       border: TableBorder(
         top:              const BorderSide(color: _dark, width: 1),
@@ -456,6 +455,7 @@ class ReciboWidget extends StatelessWidget {
         ),
         // Filas de servicios
         ...recibo.servicios.asMap().entries.map((e) {
+          final idx = e.key;
           final s = e.value;
           String venceStr = '—';
           if (s.fechaVence != null && s.fechaVence!.isNotEmpty) {
@@ -466,7 +466,7 @@ class ReciboWidget extends StatelessWidget {
             decoration: const BoxDecoration(color: Colors.white),
             children: [
               if (tieneFecha)
-                _td(s.fechaCuota ?? '', fs: fs),
+                _td(idx == firstFechaIdx ? (s.fechaCuota ?? '') : '', fs: fs),
               if (tieneVence)
                 _td(venceStr, fs: fs, center: true),
               _td(_normalizarDescripcionAlquiler(
