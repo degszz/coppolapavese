@@ -63,7 +63,7 @@ dependencies:
   file_picker: ^8.0.0
 
   # Permisos (Android/iOS)
-  permission_handler: ^11.3.1
+  permission_handler: ^13.0.1
 
   # Íconos adicionales
   flutter_launcher_icons: ^0.14.1
