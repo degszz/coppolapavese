@@ -46,7 +46,7 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
   Set<int> _propiedadesSeleccionadas = {};
 
   final _fmtNombre = DateFormat('yyyyMMdd_HHmm');
-  final _fmtMes = DateFormat('MM/yyyy');
+  final _fmtFechaCompleta = DateFormat('dd/MM/yyyy');
 
   @override
   void initState() {
@@ -188,15 +188,12 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
           _panelReporteConFiltros(),
           const SizedBox(height: 12),
           // ── Gráficas abajo del reporte ──
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Expanded(child: _panelGraficas()),
-                const SizedBox(width: 12),
-                Expanded(child: _panelGraficaContratos()),
-              ],
-            ),
+          Column(
+            children: [
+              _panelGraficas(),
+              const SizedBox(height: 12),
+              _panelGraficaContratos(),
+            ],
           ),
           const SizedBox(height: 24),
         ],
@@ -290,7 +287,7 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
                       ),
                       child: Text(
                         _filtroDesde != null
-                            ? _fmtMes.format(_filtroDesde!)
+                            ? _fmtFechaCompleta.format(_filtroDesde!)
                             : 'Todos',
                         style: TextStyle(
                             fontSize: 13,
@@ -321,7 +318,7 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
                       ),
                       child: Text(
                         _filtroHasta != null
-                            ? _fmtMes.format(_filtroHasta!)
+                            ? _fmtFechaCompleta.format(_filtroHasta!)
                             : 'Todos',
                         style: TextStyle(
                             fontSize: 13,
@@ -712,10 +709,10 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
       mensaje.writeln('*Reporte de Propietario: $nombreProp*');
       if (_filtroDesde != null || _filtroHasta != null) {
         final desde = _filtroDesde != null
-            ? DateFormat('MM/yyyy').format(_filtroDesde!)
+            ? _fmtFechaCompleta.format(_filtroDesde!)
             : 'inicio';
         final hasta = _filtroHasta != null
-            ? DateFormat('MM/yyyy').format(_filtroHasta!)
+            ? _fmtFechaCompleta.format(_filtroHasta!)
             : 'actualidad';
         mensaje.writeln('Período: $desde - $hasta');
       }
@@ -1037,77 +1034,26 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
   }
 
   Widget _panelGraficas() {
-    final total = _estadisticas['total'] ?? 0;
-    final pagados = _estadisticas['pagados'] ?? 0;
-    final pendientes = _estadisticas['pendientes'] ?? 0;
-
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _tituloSeccion('Graficas', Icons.pie_chart_outline),
+            _tituloSeccion('Recibos por Mes (últimos 6)', Icons.bar_chart_outlined),
             const SizedBox(height: 16),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Expanded(
-                  child: Column(
-                    children: [
-                      const Text('Estado de Recibos',
+            SizedBox(
+              height: 180,
+              child: _datosMensuales.isEmpty
+                  ? const Center(
+                      child: Text('Sin datos',
                           style: TextStyle(
-                              fontSize: 12, fontWeight: FontWeight.w600)),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        height: 160,
-                        child: CustomPaint(
-                          painter: _DonutChartPainter(
-                              pagados: pagados,
-                              pendientes: pendientes,
-                              total: total),
-                          size: Size.infinite,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          _leyenda(const Color(0xFF2E7D32),
-                              'Pagados ($pagados)'),
-                          const SizedBox(width: 12),
-                          _leyenda(const Color(0xFFC62828),
-                              'Pendientes ($pendientes)'),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(width: 20),
-                Expanded(
-                  child: Column(
-                    children: [
-                      const Text('Recibos por Mes (ultimos 6)',
-                          style: TextStyle(
-                              fontSize: 12, fontWeight: FontWeight.w600)),
-                      const SizedBox(height: 8),
-                      SizedBox(
-                        height: 160,
-                        child: _datosMensuales.isEmpty
-                            ? const Center(
-                                child: Text('Sin datos',
-                                    style: TextStyle(
-                                        color: Color(0xFF9E9E9E))))
-                            : CustomPaint(
-                                painter: _BarChartPainter(
-                                    datos: _datosMensuales),
-                                size: Size.infinite,
-                              ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
+                              color: Color(0xFF9E9E9E))))
+                  : CustomPaint(
+                      painter: _BarChartPainter(
+                          datos: _datosMensuales),
+                      size: Size.infinite,
+                    ),
             ),
           ],
         ),
