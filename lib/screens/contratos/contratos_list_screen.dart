@@ -1081,8 +1081,10 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
       ];
     }
 
-    final cuotaActual = c['_cuota_actual'] as int? ?? 0;
-    final mesEmision = (c['_ultimo_mes_recibo'] as int?) ?? DateTime.now().month;
+    // Usar los valores manuales del contrato (cuota_inicial, mes_emision)
+    // en lugar de los calculados desde recibos (_cuota_actual, _ultimo_mes_recibo)
+    final cuotaManual = c['cuota_inicial'] as int? ?? 0;
+    final mesEmision = c['mes_emision'] as int? ?? DateTime.now().month;
 
     return [
       _seccionTitulo('Periodos Fijos', Icons.calendar_month_outlined),
@@ -1128,18 +1130,18 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
               final desde = p['cuota_desde'] as int? ?? 0;
               final hasta = p['cuota_hasta'] as int? ?? 0;
               final monto = (p['monto'] as num?)?.toDouble() ?? 0.0;
-              final entre = cuotaActual >= desde && cuotaActual <= hasta;
+              final entre = cuotaManual >= desde && cuotaManual <= hasta;
               final esUltimo = e.key == periodos.length - 1;
               final multiplesPeriodos = periodos.length > 1;
 
-              // Va por: cuota actual + mes
+              // Va por: cuota manual (cuota_inicial) + mes manual (mes_emision)
               final mesLabel = _mesesAbrev[(mesEmision - 1).clamp(0, 11)];
               String? vaPorText;
               if (multiplesPeriodos && esUltimo) {
-                final num = cuotaActual >= desde ? cuotaActual : desde;
+                final num = cuotaManual >= desde ? cuotaManual : desde;
                 vaPorText = '$num $mesLabel';
               } else if (!multiplesPeriodos) {
-                vaPorText = entre ? '$cuotaActual $mesLabel' : null;
+                vaPorText = entre ? '$cuotaManual $mesLabel' : null;
               }
               return Container(
                 padding:
