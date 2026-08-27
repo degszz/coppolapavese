@@ -40,7 +40,7 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
   // ── Filtros ───────────────────────────────────────────────────
   DateTime? _filtroDesde;
   DateTime? _filtroHasta;
-  int? _filtroPropietarioId;
+  Set<int> _propietariosSeleccionados = {}; // Múltiples propietarios
   List<Map<String, dynamic>> _propietarios = [];
   List<Map<String, dynamic>> _propiedadesDelPropietario = [];
   Set<int> _propiedadesSeleccionadas = {};
@@ -60,14 +60,21 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
     if (mounted) setState(() => _propietarios = props);
   }
 
-  Future<void> _cargarPropiedadesDelPropietario(int propietarioId) async {
-    final props =
-        await _db.obtenerPropiedadesDeContratosPorPropietario(propietarioId);
+  Future<void> _cargarPropiedadesDePropietarios() async {
+    // Cargar propiedades de todos los propietarios seleccionados
+    final todasProps = <Map<String, dynamic>>[];
+    for (final pid in _propietariosSeleccionados) {
+      final props = await _db.obtenerPropiedadesDeContratosPorPropietario(pid);
+      for (final p in props) {
+        p['propietario_id'] = pid; // Marcar a qué propietario pertenece
+      }
+      todasProps.addAll(props);
+    }
     if (mounted) {
       setState(() {
-        _propiedadesDelPropietario = props;
+        _propiedadesDelPropietario = todasProps;
         _propiedadesSeleccionadas =
-            props.map((p) => p['id'] as int).toSet(); // todas seleccionadas
+            todasProps.map((p) => p['id'] as int).toSet(); // todas seleccionadas
       });
     }
   }
@@ -329,60 +336,134 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  // Propietario dropdown
-                  DropdownButtonFormField<int?>(
-                    value: _filtroPropietarioId,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      labelText: 'Propietario',
-                      isDense: true,
-                      border: OutlineInputBorder(),
-                    ),
-                    items: [
-                      const DropdownMenuItem<int?>(
-                        value: null,
-                        child: Text('Todos los propietarios',
-                            style: TextStyle(fontSize: 12)),
+                  // Propietarios (múltiples) - Chips seleccionables
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          const Text('Propietarios:',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF424242))),
+                          const Spacer(),
+                          if (_propietariosSeleccionados.isNotEmpty)
+                            TextButton.icon(
+                              onPressed: () => setState(() {
+                                _propietariosSeleccionados.clear();
+                                _propiedadesDelPropietario = [];
+                                _propiedadesSeleccionadas = {};
+                              }),
+                              icon: const Icon(Icons.clear_all, size: 14),
+                              label: const Text('Limpiar',
+                                  style: TextStyle(fontSize: 11)),
+                              style: TextButton.styleFrom(
+                                  foregroundColor: const Color(0xFFC62828),
+                                  padding: EdgeInsets.zero,
+                                  minimumSize: const Size(0, 28),
+                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                            ),
+                        ],
                       ),
-                      ..._propietarios.map((p) => DropdownMenuItem<int?>(
-                            value: p['id'] as int,
-                            child: Text(
-                                p['nombre'] as String? ?? 'Sin nombre',
-                                style: const TextStyle(fontSize: 12),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: _propietarios.map((p) {
+                          final id = p['id'] as int;
+                          final nombre = p['nombre'] as String? ?? 'Sin nombre';
+                          final selected = _propietariosSeleccionados.contains(id);
+                          return FilterChip(
+                            label: Text(nombre,
+                                style: TextStyle(
+                                    fontSize: 11,
+                                    color: selected
+                                        ? Colors.white
+                                        : const Color(0xFF424242)),
                                 overflow: TextOverflow.ellipsis),
-                          )),
+                            selected: selected,
+                            selectedColor: const Color(0xFF1565C0),
+                            checkmarkColor: Colors.white,
+                            backgroundColor:
+                                const Color(0xFF1565C0).withValues(alpha: 0.08),
+                            side: BorderSide(
+                                color: const Color(0xFF1565C0)
+                                    .withValues(alpha: 0.3)),
+                            onSelected: (sel) {
+                              setState(() {
+                                if (sel) {
+                                  _propietariosSeleccionados.add(id);
+                                } else {
+                                  _propietariosSeleccionados.remove(id);
+                                }
+                                _propiedadesDelPropietario = [];
+                                _propiedadesSeleccionadas = {};
+                              });
+                              if (_propietariosSeleccionados.isNotEmpty) {
+                                _cargarPropiedadesDePropietarios();
+                              }
+                            },
+                          );
+                        }).toList(),
+                      ),
                     ],
-                    onChanged: (v) {
-                      setState(() {
-                        _filtroPropietarioId = v;
-                        _propiedadesDelPropietario = [];
-                        _propiedadesSeleccionadas = {};
-                      });
-                      if (v != null) _cargarPropiedadesDelPropietario(v);
-                    },
                   ),
-                  // Propiedades del propietario seleccionado
-                  if (_filtroPropietarioId != null &&
+                  // Propiedades de los propietarios seleccionados
+                  if (_propietariosSeleccionados.isNotEmpty &&
                       _propiedadesDelPropietario.isNotEmpty) ...[
                     const SizedBox(height: 10),
-                    const Text('Propiedades:',
-                        style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF424242))),
+                    Row(
+                      children: [
+                        const Text('Propiedades:',
+                            style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF424242))),
+                        const Spacer(),
+                        TextButton.icon(
+                          onPressed: () => setState(() {
+                            _propiedadesSeleccionadas =
+                                _propiedadesDelPropietario
+                                    .map((p) => p['id'] as int)
+                                    .toSet();
+                          }),
+                          icon: const Icon(Icons.check_box, size: 14),
+                          label: const Text('Todas',
+                              style: TextStyle(fontSize: 11)),
+                          style: TextButton.styleFrom(
+                              foregroundColor: const Color(0xFF1565C0),
+                              padding: EdgeInsets.zero,
+                              minimumSize: const Size(0, 28),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                        ),
+                        const SizedBox(width: 8),
+                        TextButton.icon(
+                          onPressed: () => setState(() {
+                            _propiedadesSeleccionadas.clear();
+                          }),
+                          icon: const Icon(Icons.check_box_outline_blank,
+                              size: 14),
+                          label: const Text('Ninguna',
+                              style: TextStyle(fontSize: 11)),
+                          style: TextButton.styleFrom(
+                              foregroundColor: const Color(0xFF9E9E9E),
+                              padding: EdgeInsets.zero,
+                              minimumSize: const Size(0, 28),
+                              tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                        ),
+                      ],
+                    ),
                     const SizedBox(height: 6),
                     Wrap(
                       spacing: 6,
                       runSpacing: 6,
-                      children:
-                          _propiedadesDelPropietario.map((prop) {
+                      children: _propiedadesDelPropietario.map((prop) {
                         final id = prop['id'] as int;
                         final dir = prop['direccion'] as String? ?? '';
                         final loc = prop['localidad'] as String? ?? '';
-                        final label =
-                            loc.isNotEmpty ? '$dir, $loc' : dir;
-                        final selected =
-                            _propiedadesSeleccionadas.contains(id);
+                        final label = loc.isNotEmpty ? '$dir, $loc' : dir;
+                        final selected = _propiedadesSeleccionadas.contains(id);
                         return FilterChip(
                           label: Text(label,
                               style: TextStyle(
@@ -415,14 +496,14 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
                   // Botón limpiar filtros
                   if (_filtroDesde != null ||
                       _filtroHasta != null ||
-                      _filtroPropietarioId != null)
+                      _propietariosSeleccionados.isNotEmpty)
                     SizedBox(
                       width: double.infinity,
                       child: TextButton.icon(
                         onPressed: () => setState(() {
                           _filtroDesde = null;
                           _filtroHasta = null;
-                          _filtroPropietarioId = null;
+                          _propietariosSeleccionados.clear();
                           _propiedadesDelPropietario = [];
                           _propiedadesSeleccionadas = {};
                         }),
@@ -617,10 +698,12 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
     var recibos = await _db.obtenerRecibosParaExcel(
       fechaDesde: _filtroDesde?.toIso8601String(),
       fechaHasta: _filtroHasta?.toIso8601String(),
-      propietarioId: _filtroPropietarioId,
+      propietarioIds: _propietariosSeleccionados.isEmpty
+          ? null
+          : _propietariosSeleccionados.toList(),
     );
     // Filtrar por propiedades seleccionadas si hay filtro activo
-    if (_filtroPropietarioId != null &&
+    if (_propietariosSeleccionados.isNotEmpty &&
         _propiedadesDelPropietario.isNotEmpty &&
         _propiedadesSeleccionadas.length <
             _propiedadesDelPropietario.length) {
@@ -637,20 +720,13 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
     return recibos;
   }
 
-  String? _obtenerNombrePropietario() {
-    if (_filtroPropietarioId == null) return null;
-    final prop = _propietarios.firstWhere(
-        (p) => p['id'] == _filtroPropietarioId,
-        orElse: () => {});
-    return prop['nombre'] as String?;
-  }
-
-  String? _obtenerTelefonoPropietario() {
-    if (_filtroPropietarioId == null) return null;
-    final prop = _propietarios.firstWhere(
-        (p) => p['id'] == _filtroPropietarioId,
-        orElse: () => {});
-    return prop['telefono'] as String?;
+  String _obtenerNombresPropietarios() {
+    if (_propietariosSeleccionados.isEmpty) return 'Todos';
+    final nombres = _propietarios
+        .where((p) => _propietariosSeleccionados.contains(p['id'] as int))
+        .map((p) => p['nombre'] as String? ?? 'Sin nombre')
+        .toList();
+    return nombres.join(', ');
   }
 
   Future<void> _descargarPropietario() async {
@@ -663,7 +739,7 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
       }
       final bytes = await ExcelGenerator.generarExcelPropietario(
         recibos: recibos,
-        propietarioNombre: _obtenerNombrePropietario(),
+        propietarioNombre: _obtenerNombresPropietarios(),
       );
       final ruta = await _guardarArchivo(bytes, 'Propietarios');
       setState(() => _rutaArchivoProp = ruta);
@@ -683,14 +759,14 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
         _mostrarSinDatos();
         return;
       }
+      final nombreProp = _obtenerNombresPropietarios();
       final bytes = await ExcelGenerator.generarExcelPropietario(
         recibos: recibos,
-        propietarioNombre: _obtenerNombrePropietario(),
+        propietarioNombre: nombreProp,
       );
 
       // Generar PDF del Excel para compartir por WhatsApp
       final dir = await getTemporaryDirectory();
-      final nombreProp = _obtenerNombrePropietario() ?? 'Propietarios';
       final fmtNombre = DateFormat('yyyyMMdd_HHmm');
 
       // Guardar Excel

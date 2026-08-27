@@ -1232,7 +1232,7 @@ class DatabaseHelper {
   Future<List<Map<String, dynamic>>> obtenerRecibosParaExcel({
     String? fechaDesde,
     String? fechaHasta,
-    int? propietarioId,
+    List<int>? propietarioIds,
     int? inquilinoId,
     String? estado,
   }) async {
@@ -1248,9 +1248,10 @@ class DatabaseHelper {
       condiciones.add('r.fecha_emision <= ?');
       args.add(fechaHasta);
     }
-    if (propietarioId != null) {
-      condiciones.add('r.propietario_id = ?');
-      args.add(propietarioId);
+    if (propietarioIds != null && propietarioIds.isNotEmpty) {
+      final placeholders = propietarioIds.map((_) => '?').join(',');
+      condiciones.add('r.propietario_id IN ($placeholders)');
+      args.addAll(propietarioIds);
     }
     if (inquilinoId != null) {
       condiciones.add('r.inquilino_id = ?');
@@ -1292,7 +1293,7 @@ class DatabaseHelper {
       LEFT JOIN servicios_recibo s  ON s.recibo_id      = r.id
       $where
       GROUP BY c.id
-      ORDER BY c.id ASC
+      ORDER BY p.nombre, c.id ASC
     ''', args);
   }
 
