@@ -1227,6 +1227,8 @@ class DatabaseHelper {
   }
 
   /// Todos los recibos con filtros opcionales para Excel
+  /// Agrupa por contrato (una fila por contrato), incluye monto del último período fijo
+  /// y servicios con precios concatenados.
   Future<List<Map<String, dynamic>>> obtenerRecibosParaExcel({
     String? fechaDesde,
     String? fechaHasta,
@@ -1264,12 +1266,23 @@ class DatabaseHelper {
 
     return await db.rawQuery('''
       SELECT
-        r.*,
+        c.id AS contrato_id,
+        MAX(r.id) AS ultimo_recibo_id,
+        MAX(r.fecha_emision) AS ultima_fecha_emision,
+        MAX(r.estado) AS estado,
+        MAX(r.monto_total) AS monto_total,
+        MAX(r.monto_abonado) AS monto_abonado,
         p.nombre   AS propietario_nombre,
         i.nombre   AS inquilino_nombre,
         COALESCE(pr.direccion, d.direccion, '') AS direccion,
         COALESCE(pr.localidad, d.localidad, '') AS localidad,
-        GROUP_CONCAT(s.descripcion, ' | ') AS servicios_descripcion
+        (SELECT pf.monto FROM periodos_fijos pf
+           WHERE pf.contrato_id = c.id
+           ORDER BY pf.cuota_hasta DESC LIMIT 1) AS monto_periodo_actual,
+        GROUP_CONCAT(
+          s.descripcion || ': ' || printf('\$%,.0f', s.monto),
+          ' | '
+        ) AS servicios_descripcion
       FROM recibos r
       LEFT JOIN propietarios     p  ON r.propietario_id = p.id
       LEFT JOIN inquilinos       i  ON r.inquilino_id   = i.id
@@ -1278,8 +1291,8 @@ class DatabaseHelper {
       LEFT JOIN propiedades      pr ON pr.id = c.propiedad_id
       LEFT JOIN servicios_recibo s  ON s.recibo_id      = r.id
       $where
-      GROUP BY r.id
-      ORDER BY r.fecha_emision DESC
+      GROUP BY c.id
+      ORDER BY c.id ASC
     ''', args);
   }
 
