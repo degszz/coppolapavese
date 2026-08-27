@@ -12,8 +12,10 @@ const _mesesCompletosPdf = [
 
 String _normalizarDescripcionAlquilerPdf(
     String descripcion, int? numeroCuota, String? fechaEmisionIso) {
-  if (!descripcion.toLowerCase().startsWith('alquiler')) return descripcion;
+  final desc = descripcion.trim();
+  if (!desc.toLowerCase().startsWith('alquiler')) return descripcion;
   if (numeroCuota == null) return descripcion;
+  // Forzar formato simple aunque la descripción ya traiga mes/año
   return 'Alquiler Cuota N°$numeroCuota';
 }
 
@@ -401,14 +403,17 @@ class PdfGenerator {
         (s) => s.fechaVence != null && s.fechaVence!.isNotEmpty);
     final fmtDate = DateFormat('dd/MM/yyyy');
 
-    // Obtener fecha formateada abreviada para mostrar solo en la primera fila
+    // Obtener fecha formateada abreviada y el índice de la primera fila con fecha
     String? fechaDisplay;
+    int? firstFechaIdx;
     if (hasFecha) {
-      final firstConFecha = recibo.servicios
-          .where((s) => s.fechaCuota != null && s.fechaCuota!.isNotEmpty)
-          .firstOrNull;
-      if (firstConFecha != null) {
-        fechaDisplay = _fmtMesAbrev(firstConFecha.fechaCuota!);
+      for (int i = 0; i < recibo.servicios.length; i++) {
+        final s = recibo.servicios[i];
+        if (s.fechaCuota != null && s.fechaCuota!.isNotEmpty) {
+          fechaDisplay = _fmtMesAbrev(s.fechaCuota!);
+          firstFechaIdx = i;
+          break;
+        }
       }
     }
 
@@ -463,7 +468,7 @@ class PdfGenerator {
           return pw.TableRow(
             decoration: const pw.BoxDecoration(color: PdfColors.white),
             children: [
-              if (hasFecha) td(idx == 0 ? (fechaDisplay ?? '') : '', center: true),
+              if (hasFecha) td(idx == firstFechaIdx ? (fechaDisplay ?? '') : '', center: true),
               if (hasFechaVence) td(venceStr, center: true),
               td(_normalizarDescripcionAlquilerPdf(
                   s.descripcion, recibo.numeroCuota, recibo.fechaEmision)),
