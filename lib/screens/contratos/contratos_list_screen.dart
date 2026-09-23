@@ -13,6 +13,22 @@ const _mesesCompletosContratos = [
   'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
 ];
 
+/// Separador vertical entre grupos de chips de filtro.
+class _sepChip extends StatelessWidget {
+  const _sepChip();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Padding(
+      padding: EdgeInsets.symmetric(horizontal: 2),
+      child: SizedBox(
+        height: 24,
+        child: VerticalDivider(width: 1, color: Color(0xFFE0E0E0)),
+      ),
+    );
+  }
+}
+
 String _normalizarDescAlquilerContratos(
     String desc, int? numeroCuota, String? fechaEmisionIso) {
   if (!desc.toLowerCase().startsWith('alquiler')) return desc;
@@ -52,9 +68,13 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
   // ID del contrato expandido (null = ninguno)
   int? _expandidoId;
 
-  // Filtros por chips
-  String? _filtroEstadoCuenta; // null = Todos | 'al_dia' | 'atrasado' | 'pendiente'
-  bool _filtroPendientes = false;
+  // Filtros (se combinan con AND, junto al texto de búsqueda)
+  // Período/prórroga: 'fijo' | 'prorroga' (null = todos)
+  String? _filtroPeriodo;
+  // Recibos: true = con recibos | false = sin recibos (null = todos)
+  bool? _filtroRecibos;
+  // Mes de emisión: 1..12 (null = todos)
+  int? _filtroMes;
 
   static const _magenta = Color(0xFFC2185B);
   static final _fmtMonto =
@@ -98,22 +118,48 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
       final cId = c['id'] as int?;
       if (cId != null) {
         try {
-          c['_garantes'] = await _db.obtenerGarantesPorContrato(cId);
-          c['_periodos'] = await _db.obtenerPeriodosPorContrato(cId);
-          c['_conceptos'] = await _db.obtenerConceptosPorContrato(cId);
-          c['_serviciosUltimoRecibo'] = await _db.obtenerServiciosUltimoRecibo(cId);
+          // Paralelizar las consultas independientes para reducir latencia
+          // en BD de red (antes eran awaits secuenciales por contrato).
+          final results = await Future.wait<dynamic>([
+            _db.obtenerGarantesPorContrato(cId),
+            _db.obtenerPeriodosPorContrato(cId),
+            _db.obtenerProrrogaActiva(cId),
+            _db.obtenerConceptosPorContrato(cId),
+            _db.obtenerServiciosUltimoRecibo(cId),
+            _db.obtenerMesesConRecibos(cId),
+            _db.contarRecibosPorContrato(cId),
+          ]);
+          c['_garantes'] = results[0] as List<Map<String, dynamic>>;
+          c['_periodos'] = results[1] as List<Map<String, dynamic>>;
+          c['_prorroga'] = results[2] as Map<String, dynamic>?;
+          c['_conceptos'] = results[3] as List<Map<String, dynamic>>;
+          c['_serviciosUltimoRecibo'] = results[4] as List<Map<String, dynamic>>;
+          c['_meses_recibos'] = results[5] as List<int>;
+          // Sobrescribir el conteo con la misma fuente que el historial
+          // del propietario, para que el filtro Con/Sin recibos coincida.
+          c['_recibos_emitidos'] = results[6] as int;
+          final prorroga = c['_prorroga'] as Map<String, dynamic>?;
+          c['_prorrogaPeriodos'] = prorroga != null
+              ? await _db.obtenerProrrogaPeriodos(prorroga['id'] as int)
+              : <Map<String, dynamic>>[];
         } catch (e) {
           debugPrint('[cargarDatosCompletos] contrato $cId falló: $e');
           c['_garantes'] = <Map<String, dynamic>>[];
           c['_periodos'] = <Map<String, dynamic>>[];
+          c['_prorroga'] = null;
+          c['_prorrogaPeriodos'] = <Map<String, dynamic>>[];
           c['_conceptos'] = <Map<String, dynamic>>[];
           c['_serviciosUltimoRecibo'] = <Map<String, dynamic>>[];
+          c['_meses_recibos'] = <int>[];
         }
       } else {
         c['_garantes'] = <Map<String, dynamic>>[];
         c['_periodos'] = <Map<String, dynamic>>[];
+        c['_prorroga'] = null;
+        c['_prorrogaPeriodos'] = <Map<String, dynamic>>[];
         c['_conceptos'] = <Map<String, dynamic>>[];
         c['_serviciosUltimoRecibo'] = <Map<String, dynamic>>[];
+        c['_meses_recibos'] = <int>[];
       }
       // Cargar foto de la propiedad
       final propiedadId = c['propiedad_id'] as int?;
@@ -155,8 +201,9 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
   void _buscar() {
     final q = _busquedaCtrl.text.toLowerCase().trim();
     final hayFiltros = q.isNotEmpty ||
-        _filtroEstadoCuenta != null ||
-        _filtroPendientes;
+        _filtroPeriodo != null ||
+        _filtroRecibos != null ||
+        _filtroMes != null;
     if (!hayFiltros) {
       setState(() => _contratosFiltrados = List.from(_contratos));
       return;
@@ -174,32 +221,67 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
             return false;
           }
         }
-        // Con pendientes
-        if (_filtroPendientes) {
-          final pend = c['_recibos_pendientes'] as int? ?? 0;
-          if (pend <= 0) return false;
+        // Período fijo / prórroga
+        if (_filtroPeriodo != null) {
+          final tieneFijo =
+              ((c['_periodos'] as List<Map<String, dynamic>>?) ?? []).isNotEmpty;
+          final tieneProrroga = c['_prorroga'] != null;
+          if (_filtroPeriodo == 'fijo' && !tieneFijo) return false;
+          if (_filtroPeriodo == 'prorroga' && !tieneProrroga) return false;
         }
-        // Estado de cuenta
-        if (_filtroEstadoCuenta != null) {
-          if (_estadoCuentaDe(c) != _filtroEstadoCuenta) return false;
+        // Recibos emitidos
+        if (_filtroRecibos != null) {
+          final emitidos = c['_recibos_emitidos'] as int? ?? 0;
+          if (_filtroRecibos! && emitidos <= 0) return false;
+          if (!_filtroRecibos! && emitidos > 0) return false;
+        }
+        // Mes de emisión
+        if (_filtroMes != null) {
+          final meses =
+              (c['_meses_recibos'] as List<int>?) ?? const <int>[];
+          if (!meses.contains(_filtroMes)) return false;
         }
         return true;
       }).toList();
     });
   }
 
-  String _estadoCuentaDe(Map<String, dynamic> c) {
-    final emitidos = c['_recibos_emitidos'] as int? ?? 0;
-    if (emitidos == 0) return 'al_dia';
-    final saldo = (c['_ultimo_saldo'] as num?)?.toDouble() ?? 0;
-    if (saldo <= 0) return 'al_dia';
-    final vtoStr = c['_ultimo_vencimiento'] as String? ?? '';
-    try {
-      final diff = DateTime.now().difference(DateTime.parse(vtoStr)).inDays;
-      return diff > 0 ? 'atrasado' : 'pendiente';
-    } catch (_) {
-      return 'pendiente';
-    }
+  void _quitarFiltros() {
+    setState(() {
+      _filtroPeriodo = null;
+      _filtroRecibos = null;
+      _filtroMes = null;
+    });
+    _buscar();
+  }
+
+  bool _hayFiltrosActivos() =>
+      _filtroPeriodo != null || _filtroRecibos != null || _filtroMes != null;
+
+  Widget _chipFiltroPeriodo(String valor, String label, IconData icono) {
+    final activo = _filtroPeriodo == valor;
+    const color = Color(0xFF1565C0);
+    return FilterChip(
+      selected: activo,
+      onSelected: (v) {
+        setState(() => _filtroPeriodo = v ? valor : null);
+        _buscar();
+      },
+      label: Text(label, style: const TextStyle(fontSize: 11)),
+      avatar: Icon(icono, size: 14),
+      selectedColor: color.withOpacity(0.18),
+      backgroundColor: color.withOpacity(0.06),
+      side: BorderSide(
+        color: activo ? color : color.withOpacity(0.3),
+      ),
+      labelStyle: TextStyle(
+        color: activo ? color : const Color(0xFF757575),
+        fontWeight: activo ? FontWeight.w600 : FontWeight.w500,
+      ),
+      showCheckmark: false,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      visualDensity: VisualDensity.compact,
+    );
   }
 
   Future<void> _eliminar(int id) async {
@@ -246,10 +328,25 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
   }
 
   Future<void> _irAFormulario([Map<String, dynamic>? datos]) async {
+    // Recargar el contrato desde la BD antes de abrir la edición, para que
+    // campos como "Va por" (cuota_inicial/mes_emision) reflejen el último
+    // recibo emitido (la lista puede tener datos cacheados/stale).
+    var datosFrescos = datos;
+    final cid = datos?['id'] as int?;
+    if (datos != null && cid != null) {
+      try {
+        final fresco = await _db.obtenerContratoPorId(cid);
+        if (fresco != null) {
+          datosFrescos = {...datos, ...fresco};
+        }
+      } catch (e) {
+        debugPrint('[irAFormulario] refresh contrato $cid falló: $e');
+      }
+    }
     final resultado = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-        builder: (_) => ContratoFormScreen(datosExistentes: datos),
+        builder: (_) => ContratoFormScreen(datosExistentes: datosFrescos),
       ),
     );
     if (resultado == true) _refrescoSilencioso();
@@ -313,56 +410,34 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
               runSpacing: 4,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
+                // Período fijo / prórroga
+                _chipFiltroPeriodo('fijo', 'Con período fijo',
+                    Icons.calendar_month_outlined),
+                _chipFiltroPeriodo('prorroga', 'Con prórroga',
+                    Icons.event_repeat_outlined),
+                const _sepChip(),
+                // Recibos
                 FilterChip(
-                  selected: _filtroPendientes,
+                  selected: _filtroRecibos == true,
                   onSelected: (v) {
-                    setState(() => _filtroPendientes = v);
+                    setState(() => _filtroRecibos = v ? true : null);
                     _buscar();
                   },
-                  label: const Text('Con pendientes',
+                  label: const Text('Con recibos',
                       style: TextStyle(fontSize: 11)),
-                  avatar: const Icon(Icons.pending_actions, size: 14),
-                  selectedColor: const Color(0xFFE65100).withOpacity(0.18),
-                  backgroundColor: const Color(0xFFE65100).withOpacity(0.06),
-                  side: BorderSide(
-                    color: _filtroPendientes
-                        ? const Color(0xFFE65100)
-                        : const Color(0xFFE65100).withOpacity(0.3),
-                  ),
-                  labelStyle: TextStyle(
-                    color: _filtroPendientes
-                        ? const Color(0xFFE65100)
-                        : const Color(0xFF757575),
-                    fontWeight: _filtroPendientes
-                        ? FontWeight.w600
-                        : FontWeight.w500,
-                  ),
-                  showCheckmark: false,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  visualDensity: VisualDensity.compact,
-                ),
-                FilterChip(
-                  selected: _filtroEstadoCuenta == 'al_dia',
-                  onSelected: (v) {
-                    setState(() => _filtroEstadoCuenta =
-                        v ? 'al_dia' : null);
-                    _buscar();
-                  },
-                  label: const Text('Al día',
-                      style: TextStyle(fontSize: 11)),
-                  avatar: const Icon(Icons.check_circle_outline, size: 14),
+                  avatar: const Icon(Icons.receipt_long_outlined, size: 14),
                   selectedColor: const Color(0xFF2E7D32).withOpacity(0.18),
                   backgroundColor: const Color(0xFF2E7D32).withOpacity(0.06),
                   side: BorderSide(
-                    color: _filtroEstadoCuenta == 'al_dia'
+                    color: _filtroRecibos == true
                         ? const Color(0xFF2E7D32)
                         : const Color(0xFF2E7D32).withOpacity(0.3),
                   ),
                   labelStyle: TextStyle(
-                    color: _filtroEstadoCuenta == 'al_dia'
+                    color: _filtroRecibos == true
                         ? const Color(0xFF2E7D32)
                         : const Color(0xFF757575),
-                    fontWeight: _filtroEstadoCuenta == 'al_dia'
+                    fontWeight: _filtroRecibos == true
                         ? FontWeight.w600
                         : FontWeight.w500,
                   ),
@@ -371,27 +446,26 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                   visualDensity: VisualDensity.compact,
                 ),
                 FilterChip(
-                  selected: _filtroEstadoCuenta == 'atrasado',
+                  selected: _filtroRecibos == false,
                   onSelected: (v) {
-                    setState(() => _filtroEstadoCuenta =
-                        v ? 'atrasado' : null);
+                    setState(() => _filtroRecibos = v ? false : null);
                     _buscar();
                   },
-                  label: const Text('Atrasado',
+                  label: const Text('Sin recibos',
                       style: TextStyle(fontSize: 11)),
-                  avatar: const Icon(Icons.error_outline, size: 14),
-                  selectedColor: const Color(0xFFC62828).withOpacity(0.18),
-                  backgroundColor: const Color(0xFFC62828).withOpacity(0.06),
+                  avatar: const Icon(Icons.receipt_long_outlined, size: 14),
+                  selectedColor: const Color(0xFF6A1B9A).withOpacity(0.18),
+                  backgroundColor: const Color(0xFF6A1B9A).withOpacity(0.06),
                   side: BorderSide(
-                    color: _filtroEstadoCuenta == 'atrasado'
-                        ? const Color(0xFFC62828)
-                        : const Color(0xFF2E7D32).withOpacity(0.3),
+                    color: _filtroRecibos == false
+                        ? const Color(0xFF6A1B9A)
+                        : const Color(0xFF6A1B9A).withOpacity(0.3),
                   ),
                   labelStyle: TextStyle(
-                    color: _filtroEstadoCuenta == 'atrasado'
-                        ? const Color(0xFFC62828)
+                    color: _filtroRecibos == false
+                        ? const Color(0xFF6A1B9A)
                         : const Color(0xFF757575),
-                    fontWeight: _filtroEstadoCuenta == 'atrasado'
+                    fontWeight: _filtroRecibos == false
                         ? FontWeight.w600
                         : FontWeight.w500,
                   ),
@@ -399,47 +473,55 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   visualDensity: VisualDensity.compact,
                 ),
-                FilterChip(
-                  selected: _filtroEstadoCuenta == 'pendiente',
-                  onSelected: (v) {
-                    setState(() => _filtroEstadoCuenta =
-                        v ? 'pendiente' : null);
-                    _buscar();
-                  },
-                  label: const Text('Pendiente',
-                      style: TextStyle(fontSize: 11)),
-                  avatar: const Icon(Icons.schedule, size: 14),
-                  selectedColor: const Color(0xFFE65100).withOpacity(0.18),
-                  backgroundColor: const Color(0xFFE65100).withOpacity(0.06),
-                  side: BorderSide(
-                    color: _filtroEstadoCuenta == 'pendiente'
-                        ? const Color(0xFFE65100)
-                        : const Color(0xFFE65100).withOpacity(0.3),
+                const _sepChip(),
+                // Selector de mes
+                Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                        color: _filtroMes != null
+                            ? const Color(0xFF1565C0)
+                            : const Color(0xFFE0E0E0)),
+                    color: _filtroMes != null
+                        ? const Color(0xFF1565C0).withOpacity(0.08)
+                        : Colors.transparent,
                   ),
-                  labelStyle: TextStyle(
-                    color: _filtroEstadoCuenta == 'pendiente'
-                        ? const Color(0xFFE65100)
-                        : const Color(0xFF757575),
-                    fontWeight: _filtroEstadoCuenta == 'pendiente'
-                        ? FontWeight.w600
-                        : FontWeight.w500,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: DropdownButton<int?>(
+                    value: _filtroMes,
+                    isDense: true,
+                    underline: const SizedBox.shrink(),
+                    icon: const Icon(Icons.calendar_month_outlined,
+                        size: 16, color: Color(0xFF616161)),
+                    hint: const Text('Mes',
+                        style: TextStyle(
+                            fontSize: 12, color: Color(0xFF616161))),
+                    items: [
+                      const DropdownMenuItem<int?>(
+                          value: null,
+                          child: Text('Mes',
+                              style: TextStyle(fontSize: 12))),
+                      for (int m = 1; m <= 12; m++)
+                        DropdownMenuItem<int?>(
+                          value: m,
+                          child: Text(
+                            _mesesCompletosContratos[m],
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                    ],
+                    onChanged: (v) {
+                      setState(() => _filtroMes = v);
+                      _buscar();
+                    },
                   ),
-                  showCheckmark: false,
-                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  visualDensity: VisualDensity.compact,
                 ),
-                if (_filtroPendientes || _filtroEstadoCuenta != null)
+                if (_hayFiltrosActivos())
                   ActionChip(
                     label: const Text('Quitar filtros',
                         style: TextStyle(fontSize: 11)),
                     avatar: const Icon(Icons.clear, size: 14),
-                    onPressed: () {
-                      setState(() {
-                        _filtroPendientes = false;
-                        _filtroEstadoCuenta = null;
-                      });
-                      _buscar();
-                    },
+                    onPressed: _quitarFiltros,
                     backgroundColor: const Color(0xFFE0E0E0).withOpacity(0.5),
                     labelStyle: const TextStyle(color: Color(0xFF616161)),
                     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -456,7 +538,7 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(
-                        (_filtroPendientes || _filtroEstadoCuenta != null)
+                        _hayFiltrosActivos()
                             ? Icons.filter_alt_off_outlined
                             : Icons.description_outlined,
                         size: 72,
@@ -464,7 +546,7 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                       ),
                       const SizedBox(height: 16),
                       Text(
-                        (_filtroPendientes || _filtroEstadoCuenta != null)
+                        _hayFiltrosActivos()
                             ? 'Ningún contrato coincide con los filtros'
                             : 'No hay contratos registrados',
                         style: const TextStyle(
@@ -475,15 +557,9 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                         textAlign: TextAlign.center,
                       ),
                       const SizedBox(height: 8),
-                      if (_filtroPendientes || _filtroEstadoCuenta != null) ...[
+                      if (_hayFiltrosActivos()) ...[
                         TextButton.icon(
-                          onPressed: () {
-                            setState(() {
-                              _filtroPendientes = false;
-                              _filtroEstadoCuenta = null;
-                            });
-                            _buscar();
-                          },
+                          onPressed: _quitarFiltros,
                           icon: const Icon(Icons.clear, size: 18),
                           label: const Text('Quitar filtros'),
                         ),
@@ -749,7 +825,11 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            ..._buildPeriodos(c),
+                            // Si hay prórroga activa, sustituye a los períodos fijos
+                            if (c['_prorroga'] != null)
+                              ..._buildProrroga(c)
+                            else
+                              ..._buildPeriodos(c),
                           ],
                         ),
                       ),
@@ -792,15 +872,16 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: ElevatedButton.icon(
-                          onPressed: () {
-                            Navigator.push(
-                              context,
-                              MaterialPageRoute(
-                                builder: (_) =>
-                                    ReciboFormScreen(contratoIdInicial: id),
-                              ),
-                            );
-                          },
+onPressed: () async {
+                        final resultado = await Navigator.push<bool>(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                ReciboFormScreen(contratoIdInicial: id),
+                          ),
+                        );
+                        if (resultado == true) _refrescoSilencioso();
+                      },
                           icon:
                               const Icon(Icons.receipt_long_outlined, size: 18),
                           label: const Text('Nuevo Recibo'),
@@ -955,17 +1036,23 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
   }
 
   Widget _buildCondicionesEconomicas(Map<String, dynamic> c) {
-    // Mostrar el monto del último período fijo si existe, sino alquiler_primer_periodo
+    // Si hay prórroga activa con períodos, esta sustituye a los períodos fijos.
     final periodos =
         (c['_periodos'] as List<Map<String, dynamic>>?) ?? [];
+    final prorrogaPeriodos =
+        (c['_prorrogaPeriodos'] as List<Map<String, dynamic>>?) ?? [];
+    final usaProrroga = c['_prorroga'] != null && prorrogaPeriodos.isNotEmpty;
+    final fuentes = usaProrroga ? prorrogaPeriodos : periodos;
+
     double alquiler;
     String alquilerLabel;
-    if (periodos.isNotEmpty) {
-      final ultimo = periodos.last;
+    if (fuentes.isNotEmpty) {
+      final ultimo = fuentes.last;
       alquiler = (ultimo['monto'] as num?)?.toDouble() ?? 0.0;
       final desde = ultimo['cuota_desde'] as int? ?? 0;
       final hasta = ultimo['cuota_hasta'] as int? ?? 0;
-      alquilerLabel = 'Alquiler (cuota #$desde-#$hasta)';
+      alquilerLabel =
+          '${usaProrroga ? 'Prórroga' : 'Alquiler'} (cuota #$desde-#$hasta)';
     } else {
       alquiler = (c['alquiler_primer_periodo'] as num?)?.toDouble() ?? 0.0;
       alquilerLabel = 'Alquiler';
@@ -1143,13 +1230,17 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
               } else if (!multiplesPeriodos) {
                 vaPorText = entre ? '$cuotaManual $mesLabel' : null;
               }
-              return Container(
+return Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
-                  color: e.key % 2 == 0
-                      ? Colors.white
-                      : const Color(0xFFFCF3F6),
+                  color: cuotaManual > hasta
+                      ? const Color(0xFFC62828).withOpacity(0.12) // ROJO: período superado
+                      : (cuotaManual == hasta - 1 && hasta > 0
+                          ? const Color(0xFFFFA000).withOpacity(0.18) // Ámbar: una antes
+                          : (e.key % 2 == 0
+                              ? Colors.white
+                              : const Color(0xFFFCF3F6))),
                 ),
                 child: Row(
                   children: [
@@ -1166,7 +1257,7 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                               color: entre
                                   ? const Color(0xFFC2185B)
                                   : Colors.black87)),
-                    ),
+                      ),
                     Expanded(
                       flex: 2,
                       child: Text(_fmtMonto.format(monto),
@@ -1193,12 +1284,209 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
                                   : const Color(0xFF9E9E9E)),
                           textAlign: TextAlign.center),
                     ),
-                  ],
+],
                 ),
               );
             }),
           ],
         ),
+      ),
+    ];
+  }
+
+  /// Devuelve la fecha en formato corto (yyyy-MM-dd) de forma segura.
+  /// Si el valor es null/vacío o tiene un largo no esperado, no lanza
+  /// excepción (evita la pantalla en gris por prórrogas sin fechas).
+  String _fechaCorta(String? s) {
+    if (s == null || s.isEmpty) return 'Sin fecha';
+    return s.length >= 10 ? s.substring(0, 10) : s;
+  }
+
+  /// Sección "Prórroga" en el detalle del contrato. Si no hay prórroga
+  /// activa devuelve una lista vacía (no se muestra nada).
+  List<Widget> _buildProrroga(Map<String, dynamic> c) {
+    final prorroga = c['_prorroga'] as Map<String, dynamic>?;
+    if (prorroga == null) return [];
+
+    final periodos =
+        (c['_prorrogaPeriodos'] as List<Map<String, dynamic>>?) ?? [];
+    final azul = const Color(0xFF1565C0);
+
+    final fechaInicio = _fechaCorta(prorroga['fecha_inicio'] as String?);
+    final fechaFin = _fechaCorta(prorroga['fecha_fin'] as String?);
+    final cuotasProrroga = prorroga['cuotas_total'] as int? ?? 0;
+    final montoBase = (prorroga['monto_base'] as num?)?.toDouble() ?? 0;
+
+    return [
+      _seccionTitulo('Prórroga', Icons.event_repeat_outlined),
+      const SizedBox(height: 8),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: azul.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: azul.withOpacity(0.35)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.date_range, size: 14, color: azul),
+                const SizedBox(width: 6),
+                Text('$fechaInicio  →  $fechaFin',
+                    style: TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.w600, color: azul)),
+                const Spacer(),
+                if (cuotasProrroga > 0)
+                  Text('$cuotasProrroga cuotas',
+                      style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: azul)),
+              ],
+            ),
+            if (montoBase > 0) ...[
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Icon(Icons.attach_money, size: 14, color: azul),
+                  const SizedBox(width: 6),
+                  Text('Monto base ${_fmtMonto.format(montoBase)}',
+                      style: const TextStyle(
+                          fontSize: 12, color: Color(0xFF616161))),
+                ],
+              ),
+            ],
+            if (periodos.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              const Divider(height: 1),
+              const SizedBox(height: 6),
+              Container(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: const Color(0xFFE0E0E0)),
+                ),
+                child: Column(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 6),
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFF5F5F5),
+                        borderRadius:
+                            BorderRadius.vertical(top: Radius.circular(5)),
+                      ),
+                      child: const Row(
+                        children: [
+                          Expanded(
+                              flex: 3,
+                              child: Text('Cuotas',
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600))),
+                          Expanded(
+                              flex: 2,
+                              child: Text('Monto',
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600),
+                                  textAlign: TextAlign.right)),
+                          Expanded(
+                              flex: 2,
+                              child: Text('% Aum.',
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600),
+                                  textAlign: TextAlign.center)),
+                          Expanded(
+                              flex: 2,
+                              child: Text('Va por',
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600),
+                                  textAlign: TextAlign.center)),
+                        ],
+                      ),
+                    ),
+                    ...periodos.asMap().entries.map((e) {
+                      final p = e.value;
+                      final desde = p['cuota_desde'] as int? ?? 0;
+                      final hasta = p['cuota_hasta'] as int? ?? 0;
+                      final monto = (p['monto'] as num?)?.toDouble() ?? 0.0;
+                      final pct = (p['porcentaje'] as num?)?.toDouble() ?? 0;
+                      final vaPor = (p['va_por'] as num?)?.toInt() ?? desde;
+                      final mes =
+                          (p['mes'] as num?)?.toInt() ?? ((desde - 1) % 12) + 1;
+                      final mesLabel = _mesesAbrev[(mes - 1).clamp(0, 11)];
+                      final entre = vaPor >= desde && vaPor <= hasta;
+                      return Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 6),
+                        color: entre
+                            ? azul.withOpacity(0.12)
+                            : (e.key % 2 == 0
+                                ? Colors.white
+                                : const Color(0xFFF7F9FC)),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              flex: 3,
+                              child: Text(
+                                '#$desde — #$hasta',
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: entre
+                                        ? FontWeight.w700
+                                        : FontWeight.normal,
+                                    color: entre ? azul : Colors.black87),
+                              ),
+                            ),
+                            Expanded(
+                              flex: 2,
+                              child: Text(_fmtMonto.format(monto),
+                                  style: const TextStyle(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.black87),
+                                  textAlign: TextAlign.right),
+                            ),
+                            Expanded(
+                              flex: 2,
+                              child: Text(
+                                  pct > 0 ? '${pct.toStringAsFixed(1)}%' : '—',
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: pct > 0
+                                          ? const Color(0xFFC2185B)
+                                          : const Color(0xFF9E9E9E)),
+                                  textAlign: TextAlign.center),
+                            ),
+                            Expanded(
+                              flex: 2,
+                              child: Text(
+                                  vaPor > 0 ? '$vaPor $mesLabel' : '—',
+                                  style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: entre
+                                          ? FontWeight.w600
+                                          : FontWeight.normal,
+                                      color: entre
+                                          ? azul
+                                          : const Color(0xFF9E9E9E)),
+                                  textAlign: TextAlign.center),
+                            ),
+                          ],
+                        ),
+                      );
+                    }),
+                  ],
+                ),
+              ),
+            ],
+          ],
+),
       ),
     ];
   }
@@ -1316,10 +1604,15 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
   // ════════════════════════════════════════════════════════════════
 
   Widget _buildProgresoCuotas(Map<String, dynamic> c) {
-    final cuotaActual = c['_cuota_actual'] as int? ?? 0;
+    // "Va por" = cuota_inicial (mismo valor editable que en Editar Contrato
+    // y que usa el Recibo). Si es 0, cae al valor calculado del SQL.
+    final cuotaActual = c['cuota_inicial'] as int? ?? 0;
+    final cuotaActualFinal = cuotaActual > 0
+        ? cuotaActual
+        : (c['_cuota_actual'] as int? ?? 0);
     final cuotasTotal = c['cuotas_total'] as int? ?? 0;
     final mesEmision = (c['_ultimo_mes_recibo'] as int?) ?? DateTime.now().month;
-    if (cuotaActual == 0) return const SizedBox.shrink();
+    if (cuotaActualFinal == 0) return const SizedBox.shrink();
     final mesLabel = _mesesAbrev[(mesEmision - 1).clamp(0, 11)];
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -1334,7 +1627,7 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
           const SizedBox(width: 8),
           Flexible(
             child: Text(
-              'Va por la cuota #$cuotaActual de $cuotasTotal  ·  $mesLabel',
+              'Va por la cuota #$cuotaActualFinal de $cuotasTotal  ·  $mesLabel',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: const TextStyle(
@@ -1546,6 +1839,7 @@ class _ContratosListScreenState extends State<ContratosListScreen> {
               builder: (_) => PropietarioDetalleScreen(
                 propietarioId: propId,
                 nombrePropietario: propNombre,
+                contratoIdInicial: c['id'] as int,
               ),
             ),
           );

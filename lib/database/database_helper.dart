@@ -28,7 +28,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       dbPath,
-      version: 10, // v10: mes_emision en contratos
+      version: 15, // v15: efecto_inquilino en servicios_recibo (descontar al pago)
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       onConfigure: (db) async {
@@ -120,6 +120,7 @@ class DatabaseHelper {
         monto       REAL NOT NULL DEFAULT 0,
         punitorios  REAL NOT NULL DEFAULT 0,
         total       REAL NOT NULL DEFAULT 0,
+        fecha_cuota TEXT,
         FOREIGN KEY (recibo_id) REFERENCES recibos(id)
           ON DELETE CASCADE
       )
@@ -143,6 +144,16 @@ class DatabaseHelper {
     await _migrarV9(db);
     // tablas v10
     await _migrarV10(db);
+    // tablas v11 (prórrogas)
+    await _migrarV11(db);
+    // v12 (columna FECHA del recibo)
+    await _migrarV12(db);
+    // v13 (índices de rendimiento)
+    await _migrarV13(db);
+    // v14 (va_por/mes en prorroga_periodos)
+    await _migrarV14(db);
+    // v15 (efecto_inquilino en servicios_recibo)
+    await _migrarV15(db);
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -176,6 +187,21 @@ class DatabaseHelper {
     }
     if (oldVersion < 10) {
       await _migrarV10(db);
+    }
+    if (oldVersion < 11) {
+      await _migrarV11(db);
+    }
+    if (oldVersion < 12) {
+      await _migrarV12(db);
+    }
+    if (oldVersion < 13) {
+      await _migrarV13(db);
+    }
+    if (oldVersion < 14) {
+      await _migrarV14(db);
+    }
+    if (oldVersion < 15) {
+      await _migrarV15(db);
     }
   }
 
@@ -283,6 +309,100 @@ class DatabaseHelper {
   Future<void> _migrarV10(Database db) async {
     try {
       await db.execute("ALTER TABLE contratos ADD COLUMN mes_emision INTEGER NOT NULL DEFAULT 1");
+    } catch (_) {
+      // columna ya existe
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // MIGRACIÓN v11 — prórrogas (prorrogas + prorroga_periodos)
+  // ════════════════════════════════════════════════════════════════
+  Future<void> _migrarV11(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS prorrogas (
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        contrato_id    INTEGER NOT NULL,
+        fecha_inicio   TEXT,
+        fecha_fin      TEXT,
+        cuotas_total   INTEGER NOT NULL DEFAULT 0,
+        monto_base     REAL NOT NULL DEFAULT 0,
+        activa         INTEGER NOT NULL DEFAULT 1,
+        fecha_creacion TEXT,
+        FOREIGN KEY (contrato_id) REFERENCES contratos(id)
+          ON DELETE CASCADE
+      )
+    ''');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS prorroga_periodos (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        prorroga_id INTEGER NOT NULL,
+        cuota_desde INTEGER NOT NULL,
+        cuota_hasta INTEGER NOT NULL,
+        monto       REAL NOT NULL DEFAULT 0,
+        porcentaje  REAL NOT NULL DEFAULT 0,
+        FOREIGN KEY (prorroga_id) REFERENCES prorrogas(id)
+          ON DELETE CASCADE
+      )
+    ''');
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // MIGRACIÓN v12 — servicios_recibo.fecha_cuota (columna FECHA)
+  // ════════════════════════════════════════════════════════════════
+  Future<void> _migrarV12(Database db) async {
+    try {
+      await db.execute(
+          'ALTER TABLE servicios_recibo ADD COLUMN fecha_cuota TEXT');
+    } catch (_) {
+      // columna ya existe
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // MIGRACIÓN v13 — índices de rendimiento (BD en red)
+  // ════════════════════════════════════════════════════════════════
+  Future<void> _migrarV13(Database db) async {
+    // Aceleran las subconsultas correlacionadas y filtros frecuentes.
+    for (final ddl in [
+      'CREATE INDEX IF NOT EXISTS idx_recibos_contrato ON recibos(contrato_id)',
+      'CREATE INDEX IF NOT EXISTS idx_recibos_propietario ON recibos(propietario_id)',
+      'CREATE INDEX IF NOT EXISTS idx_recibos_inquilino ON recibos(inquilino_id)',
+      'CREATE INDEX IF NOT EXISTS idx_recibos_fecha_emision ON recibos(fecha_emision)',
+      'CREATE INDEX IF NOT EXISTS idx_recibos_estado ON recibos(estado)',
+      'CREATE INDEX IF NOT EXISTS idx_servicios_recibo ON servicios_recibo(recibo_id)',
+      'CREATE INDEX IF NOT EXISTS idx_periodos_fijos_contrato ON periodos_fijos(contrato_id)',
+      'CREATE INDEX IF NOT EXISTS idx_garantes_contrato ON garantes(contrato_id)',
+      'CREATE INDEX IF NOT EXISTS idx_conceptos_contrato ON conceptos_regulares(contrato_id)',
+    ]) {
+      try {
+        await db.execute(ddl);
+      } catch (_) {
+        // índice ya existe o tabla ausente en instalaciones viejas
+      }
+    }
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // MIGRACIÓN v14 — va_por/mes en prorroga_periodos
+  // ════════════════════════════════════════════════════════════════
+  Future<void> _migrarV14(Database db) async {
+    for (final col in ['va_por INTEGER DEFAULT 0', 'mes INTEGER DEFAULT 0']) {
+      try {
+        await db.execute('ALTER TABLE prorroga_periodos ADD COLUMN $col');
+      } catch (_) {
+        // columna ya existe
+      }
+    }
+  }
+
+  // v15: efecto del concepto extra sobre el total del recibo
+  // ('sin_efecto' | 'sumar' | 'descontar'). Los recibos históricos quedan
+  // con 'sin_efecto' → su total persistido no cambia.
+  Future<void> _migrarV15(Database db) async {
+    try {
+      await db.execute(
+        "ALTER TABLE servicios_recibo ADD COLUMN efecto_inquilino TEXT NOT NULL DEFAULT 'sin_efecto'",
+      );
     } catch (_) {
       // columna ya existe
     }
@@ -1204,8 +1324,9 @@ class DatabaseHelper {
   }
 
   /// Recibos pendientes o parciales (todas las fechas) con datos del propietario
-  Future<List<Map<String, dynamic>>> obtenerRecibosPendientes() async {
+  Future<List<Map<String, dynamic>>> obtenerRecibosPendientes({int? limit}) async {
     final db = await database;
+    final limSql = (limit != null && limit > 0) ? ' LIMIT $limit' : '';
     return await db.rawQuery('''
       SELECT
         r.*,
@@ -1223,7 +1344,17 @@ class DatabaseHelper {
       LEFT JOIN domicilios   d ON r.domicilio_id   = d.id
       WHERE r.estado IN ('pendiente', 'parcial')
       ORDER BY r.id DESC
+      $limSql
     ''');
+  }
+
+  /// Cantidad total de recibos pendientes (para el badge del Inicio,
+  /// sin cargar todos los registros).
+  Future<int> obtenerCantidadRecibosPendientes() async {
+    final db = await database;
+    final res = await db.rawQuery(
+        "SELECT COUNT(*) AS total FROM recibos WHERE estado IN ('pendiente', 'parcial')");
+    return (res.first['total'] as int?) ?? 0;
   }
 
   /// Todos los recibos con filtros opcionales para Excel
@@ -1280,17 +1411,20 @@ class DatabaseHelper {
         (SELECT pf.monto FROM periodos_fijos pf
            WHERE pf.contrato_id = c.id
            ORDER BY pf.cuota_hasta DESC LIMIT 1) AS monto_periodo_actual,
-        GROUP_CONCAT(
-          s.descripcion || ': ' || printf('\$%,.0f', s.monto),
-          ' | '
-        ) AS servicios_descripcion
+        (SELECT GROUP_CONCAT(
+                 s.descripcion || '~' || COALESCE(CAST(s.monto AS TEXT), '0'),
+                 '|')
+           FROM servicios_recibo s
+           WHERE s.recibo_id = (
+             SELECT MAX(r2.id) FROM recibos r2 WHERE r2.contrato_id = c.id
+           )
+         ) AS servicios_descripcion
       FROM recibos r
       LEFT JOIN propietarios     p  ON r.propietario_id = p.id
       LEFT JOIN inquilinos       i  ON r.inquilino_id   = i.id
       LEFT JOIN domicilios       d  ON r.domicilio_id   = d.id
       LEFT JOIN contratos        c  ON c.id = r.contrato_id
       LEFT JOIN propiedades      pr ON pr.id = c.propiedad_id
-      LEFT JOIN servicios_recibo s  ON s.recibo_id      = r.id
       $where
       GROUP BY c.id
       ORDER BY p.nombre, c.id ASC
@@ -1412,6 +1546,18 @@ class DatabaseHelper {
       WHERE r.contrato_id = ?
       ORDER BY r.fecha_emision DESC
     ''', [contratoId]);
+  }
+
+  /// Cantidad de recibos emitidos para un contrato (misma fuente que
+  /// `obtenerRecibosPorContrato`, para que el filtro coincida con el
+  /// historial del propietario).
+  Future<int> contarRecibosPorContrato(int contratoId) async {
+    final db = await database;
+    final res = await db.rawQuery(
+      'SELECT COUNT(*) AS total FROM recibos WHERE contrato_id = ?',
+      [contratoId],
+    );
+    return (res.first['total'] as int?) ?? 0;
   }
 
   Future<Map<String, dynamic>?> obtenerPropiedadPorId(int id) async {
@@ -1687,27 +1833,43 @@ class DatabaseHelper {
     ''');
   }
 
-  /// Número de cuota siguiente para un contrato.
+  /// Número de cuota para el próximo recibo de un contrato.
   ///
-  /// Lógica: `MAX(numero_cuota) + 1` contra un piso mínimo.
-  /// El piso se determina así:
-  /// 1. `cuota_inicial` manual del contrato (si > 0)
-  /// 2. Si no, `cuota_desde` del último período fijo (si hay > 1)
-  /// 3. Si no, 1
+  /// Si el contrato tiene una **prórroga activa**, el conteo "reinicia" en la
+  /// prórroga: se ignoran los recibos de períodos fijos y `cuota_inicial`,
+  /// y la próxima cuota parte desde el inicio de la prórroga contando solo
+  /// los recibos emitidos dentro de la prórroga.
   ///
-  /// Esto garantiza que la cuota siempre arranque al menos desde el inicio
-  /// del último período configurado, incluso si hay recibos previos.
+  /// Sin prórroga:
+  /// 1. Si `cuota_inicial > 0` → se devuelve tal cual (el "Va por" manual).
+  /// 2. Si no → `MAX(numero_cuota) + 1` con piso en el último período fijo.
   Future<int> obtenerNumCuotaParaContrato(int contratoId) async {
     final db = await database;
 
-    // 1. Máxima cuota emitida → base de la cuenta
-    final res = await db.rawQuery(
-      'SELECT COALESCE(MAX(numero_cuota), 0) AS maximo FROM recibos WHERE contrato_id = ?',
-      [contratoId],
-    );
-    final nextRecibos = (res.first['maximo'] as int? ?? 0) + 1;
+    // 0. Si hay prórroga activa, reiniciar el conteo en la prórroga.
+    final prorroga = await obtenerProrrogaActiva(contratoId);
+    if (prorroga != null) {
+      final periodos = await obtenerProrrogaPeriodos(prorroga['id'] as int);
+      if (periodos.isNotEmpty) {
+        int start = 1 << 30;
+        for (final p in periodos) {
+          final desde = p['cuota_desde'] as int? ?? 0;
+          if (desde > 0 && desde < start) start = desde;
+        }
+        if (start != 1 << 30) {
+          // Solo contar recibos emitidos dentro de la prórroga (cuota >= start).
+          final res = await db.rawQuery(
+            'SELECT COALESCE(MAX(numero_cuota), 0) AS maximo FROM recibos '
+            'WHERE contrato_id = ? AND numero_cuota >= ?',
+            [contratoId, start],
+          );
+          final next = (res.first['maximo'] as int? ?? 0) + 1;
+          return next > start ? next : start;
+        }
+      }
+    }
 
-    // 2. Obtener cuota_inicial del contrato
+    // 1. Obtener cuota_inicial del contrato (el "Va por" editable)
     final contrato = await db.query(
       'contratos',
       columns: ['cuota_inicial'],
@@ -1717,6 +1879,18 @@ class DatabaseHelper {
     final cuotaInicial = contrato.isNotEmpty
         ? (contrato.first['cuota_inicial'] as int?) ?? 0
         : 0;
+
+    // Si el usuario configuró "Va por", es la autoridad.
+    if (cuotaInicial > 0) {
+      return cuotaInicial;
+    }
+
+    // 2. Fallback: máxima cuota emitida → base de la cuenta
+    final res = await db.rawQuery(
+      'SELECT COALESCE(MAX(numero_cuota), 0) AS maximo FROM recibos WHERE contrato_id = ?',
+      [contratoId],
+    );
+    final nextRecibos = (res.first['maximo'] as int? ?? 0) + 1;
 
     // 3. Piso base según períodos
     final periodos = await db.query(
@@ -1732,12 +1906,7 @@ class DatabaseHelper {
       piso = (periodos.last['cuota_desde'] as int?) ?? 1;
     }
 
-    // 4. cuota_inicial solo puede SUBIR el piso, nunca bajarlo
-    if (cuotaInicial > piso) {
-      piso = cuotaInicial;
-    }
-
-    // 5. El mayor entre la cuenta real y el piso
+    // 4. El mayor entre la cuenta real y el piso
     return nextRecibos > piso ? nextRecibos : piso;
   }
 
@@ -1822,14 +1991,20 @@ class DatabaseHelper {
   /// sino alquiler_primer_periodo del contrato.
   Future<double> obtenerMontoPeriodo(int contratoId, int numeroCuota) async {
     final db = await database;
-    final periodos = await db.query(
-      'periodos_fijos',
-      where: 'contrato_id = ?',
-      whereArgs: [contratoId],
-      orderBy: 'cuota_desde ASC',
-    );
+
+    // Combina períodos fijos + prórroga activa (si la hay). La prórroga
+    // sustituye a los períodos fijos cuando corresponde.
+    final periodos = await obtenerTodosLosPeriodos(contratoId);
     if (periodos.isNotEmpty) {
-      return (periodos.last['monto'] as num).toDouble();
+      // Preferir el período que contiene la cuota; si ninguno, el último.
+      for (final p in periodos) {
+        final desde = p['cuota_desde'] as int? ?? 0;
+        final hasta = p['cuota_hasta'] as int? ?? 0;
+        if (numeroCuota >= desde && numeroCuota <= hasta) {
+          return (p['monto'] as num?)?.toDouble() ?? 0.0;
+        }
+      }
+      return (periodos.last['monto'] as num?)?.toDouble() ?? 0.0;
     }
     final contrato = await db.query(
       'contratos',
@@ -1924,5 +2099,164 @@ class DatabaseHelper {
         AND c.fecha_inicio != ''
       ORDER BY c.id ASC
     ''');
+  }
+
+  /// Obtiene TODOS los períodos (fijos + prórroga) combinados y ordenados
+  Future<List<Map<String, dynamic>>> obtenerTodosLosPeriodos(
+      int contratoId) async {
+    final db = await database;
+
+    // Períodos fijos
+    final periodosFijos = await db.query(
+      'periodos_fijos',
+      where: 'contrato_id = ?',
+      whereArgs: [contratoId],
+      orderBy: 'cuota_desde ASC',
+    );
+
+    // Períodos de prórroga (solo prórroga activa)
+    final prorrogaPeriodos = await db.rawQuery('''
+      SELECT
+        pp.cuota_desde,
+        pp.cuota_hasta,
+        pp.monto,
+        pp.porcentaje,
+        pp.va_por,
+        pp.mes,
+        p.id as prorroga_id
+      FROM prorroga_periodos pp
+      JOIN prorrogas p ON pp.prorroga_id = p.id
+      WHERE p.contrato_id = ? AND p.activa = 1
+      ORDER BY pp.cuota_desde ASC
+    ''', [contratoId]);
+
+    // Combinar y ordenar por cuota_desde
+    final todos = [...periodosFijos, ...prorrogaPeriodos];
+    todos.sort((a, b) => (a['cuota_desde'] as int).compareTo(b['cuota_desde'] as int));
+
+    return todos;
+  }
+
+  /// Meses (1-12) en los que el contrato emitió al menos un recibo
+  /// (según fecha_emision, sin importar el año). Se usa para el filtro
+  /// por mes en la sección Contratos.
+  Future<List<int>> obtenerMesesConRecibos(int contratoId) async {
+    final db = await database;
+    final res = await db.rawQuery(
+      'SELECT DISTINCT strftime(\'%m\', fecha_emision) AS mes '
+      'FROM recibos WHERE contrato_id = ? AND fecha_emision IS NOT NULL',
+      [contratoId],
+    );
+    return res
+        .map((r) => int.tryParse(r['mes'] as String? ?? ''))
+        .whereType<int>()
+        .toSet()
+        .toList();
+  }
+
+  /// Actualiza cuota_inicial Y mes_emision del contrato en una sola operación.
+  /// Se usa al emitir recibo para sincronizar ambos campos.
+  Future<void> actualizarCuotaInicialYMesContrato(int contratoId, int nuevaCuota, int nuevoMes) async {
+    final db = await database;
+    await db.update(
+      'contratos',
+      {'cuota_inicial': nuevaCuota, 'mes_emision': nuevoMes},
+      where: 'id = ?',
+      whereArgs: [contratoId],
+    );
+  }
+
+  /// Obtiene la próxima cuota a emitir para un contrato (basada en recibos existentes).
+  Future<int> obtenerProximaCuota(int contratoId) async {
+    final db = await database;
+    final res = await db.rawQuery(
+      'SELECT MAX(numero_cuota) as max_cuota FROM recibos WHERE contrato_id = ?',
+      [contratoId],
+    );
+    final maxCuota = res.first['max_cuota'] as int?;
+    return (maxCuota ?? 0) + 1;
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // PRÓRROGAS — CRUD
+  // ════════════════════════════════════════════════════════════════
+
+  Future<int> insertarProrroga(Map<String, dynamic> data) async {
+    final db = await database;
+    return await db.insert('prorrogas', data);
+  }
+
+  Future<void> actualizarProrroga(int id, Map<String, dynamic> data) async {
+    final db = await database;
+    await db.update('prorrogas', data, where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> eliminarProrroga(int id) async {
+    final db = await database;
+    await db.delete('prorrogas', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<List<Map<String, dynamic>>> obtenerProrrogasPorContrato(int contratoId) async {
+    final db = await database;
+    return await db.query(
+      'prorrogas',
+      where: 'contrato_id = ?',
+      whereArgs: [contratoId],
+      orderBy: 'fecha_inicio ASC',
+    );
+  }
+
+  Future<Map<String, dynamic>?> obtenerProrrogaActiva(int contratoId) async {
+    final db = await database;
+    final res = await db.query(
+      'prorrogas',
+      where: 'contrato_id = ? AND activa = 1',
+      whereArgs: [contratoId],
+      orderBy: 'fecha_inicio DESC',
+      limit: 1,
+    );
+    return res.isNotEmpty ? res.first : null;
+  }
+
+  Future<void> desactivarProrrogasAnteriores(int contratoId, {int? exceptoId}) async {
+    final db = await database;
+    if (exceptoId != null) {
+      await db.update(
+        'prorrogas',
+        {'activa': 0},
+        where: 'contrato_id = ? AND id != ?',
+        whereArgs: [contratoId, exceptoId],
+      );
+    } else {
+      await db.update(
+        'prorrogas',
+        {'activa': 0},
+        where: 'contrato_id = ?',
+        whereArgs: [contratoId],
+      );
+    }
+  }
+
+  Future<int> insertarProrrogaPeriodo(Map<String, dynamic> data) async {
+    final db = await database;
+    return await db.insert('prorroga_periodos', data);
+  }
+
+  Future<void> upsertProrrogaPeriodos(int prorrogaId, List<Map<String, dynamic>> periodos) async {
+    final db = await database;
+    await db.delete('prorroga_periodos', where: 'prorroga_id = ?', whereArgs: [prorrogaId]);
+    for (final p in periodos) {
+      await db.insert('prorroga_periodos', {...p, 'prorroga_id': prorrogaId});
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> obtenerProrrogaPeriodos(int prorrogaId) async {
+    final db = await database;
+    return await db.query(
+      'prorroga_periodos',
+      where: 'prorroga_id = ?',
+      whereArgs: [prorrogaId],
+      orderBy: 'cuota_desde ASC',
+    );
   }
 }

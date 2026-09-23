@@ -12,11 +12,13 @@ import '../recibos/recibo_preview_screen.dart';
 class PropietarioDetalleScreen extends StatefulWidget {
   final int propietarioId;
   final String nombrePropietario;
+  final int? contratoIdInicial;
 
   const PropietarioDetalleScreen({
     super.key,
     required this.propietarioId,
     required this.nombrePropietario,
+    this.contratoIdInicial,
   });
 
   @override
@@ -53,7 +55,10 @@ class _PropietarioDetalleScreenState extends State<PropietarioDetalleScreen> {
       if (contratos.isNotEmpty) {
         final ids = contratos.map((c) => c['id'] as int).toSet();
         if (contratoSel == null || !ids.contains(contratoSel)) {
-          contratoSel = contratos.first['id'] as int;
+          contratoSel = (widget.contratoIdInicial != null &&
+                  ids.contains(widget.contratoIdInicial))
+              ? widget.contratoIdInicial
+              : contratos.first['id'] as int;
         }
       } else {
         contratoSel = null;

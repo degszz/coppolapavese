@@ -300,7 +300,9 @@ class _InicioTab extends StatefulWidget {
 class _InicioTabState extends State<_InicioTab> {
   final _db = DatabaseHelper();
   final _calendarioKey = GlobalKey<CalendarioRecibosState>();
+  static const _limiteRecibosPendientes = 100;
   List<Map<String, dynamic>> _recibosPendientes = [];
+  int _totalPendientes = 0;
   List<Map<String, dynamic>> _contratosFinalizados = [];
   bool _cargando = true;
   Timer? _autoRefresh;
@@ -315,9 +317,9 @@ class _InicioTabState extends State<_InicioTab> {
   void initState() {
     super.initState();
     _cargarEstadisticas();
-    // Auto-refresco cada 15 segundos para sincronización en red
+    // Auto-refresco para sincronización en red (espaciado para aliviar la BD)
     _autoRefresh = Timer.periodic(
-      const Duration(seconds: 15),
+      const Duration(seconds: 30),
       (_) => _cargarEstadisticasSilencioso(),
     );
   }
@@ -332,10 +334,13 @@ class _InicioTabState extends State<_InicioTab> {
   Future<void> _cargarEstadisticas() async {
     setState(() => _cargando = true);
     try {
-      final pendientes = await _db.obtenerRecibosPendientes();
+      final pendientes = await _db
+          .obtenerRecibosPendientes(limit: _limiteRecibosPendientes);
+      final totalPendientes = await _db.obtenerCantidadRecibosPendientes();
       final finalizados = await _db.obtenerContratosFinalizados();
       setState(() {
         _recibosPendientes = pendientes;
+        _totalPendientes = totalPendientes;
         _contratosFinalizados = finalizados;
         _cargando = false;
       });
@@ -360,11 +365,14 @@ class _InicioTabState extends State<_InicioTab> {
   /// Refresco silencioso (sin spinner) para cambios de otro equipo
   Future<void> _cargarEstadisticasSilencioso() async {
     try {
-      final pendientes = await _db.obtenerRecibosPendientes();
+      final pendientes = await _db
+          .obtenerRecibosPendientes(limit: _limiteRecibosPendientes);
+      final totalPendientes = await _db.obtenerCantidadRecibosPendientes();
       final finalizados = await _db.obtenerContratosFinalizados();
       if (mounted) {
         setState(() {
           _recibosPendientes = pendientes;
+          _totalPendientes = totalPendientes;
           _contratosFinalizados = finalizados;
         });
       }
@@ -828,9 +836,7 @@ class _InicioTabState extends State<_InicioTab> {
                     ),
                   ),
                   // 3) Recibos pendientes
-                  SliverToBoxAdapter(
-                    child: _seccionRecibosPendientes(),
-                  ),
+                  _sliverRecibosPendientes(),
                 ],
               ),
       ),
@@ -987,95 +993,106 @@ class _InicioTabState extends State<_InicioTab> {
   }
 
   // ── SECCIÓN RECIBOS PENDIENTES ─────────────────────────────────
+  // Virtualizada: cada fila de tarjetas solo se construye al hacerse
+  // visible (SliverList), evitando el congelamiento con muchos recibos.
 
-  Widget _seccionRecibosPendientes() {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header
-          Row(
+  Widget _sliverRecibosPendientes() {
+    final items = _recibosPendientes;
+    final vacio = items.isEmpty;
+    final rows = (items.length / 2).ceil();
+    final nItems = vacio ? 2 : 1 + rows;
+    return SliverList.builder(
+      itemCount: nItems,
+      itemBuilder: (context, idx) {
+        if (idx == 0) return _headerPendientes(vacio);
+        if (vacio) return _vacioPendientes();
+        final i = (idx - 1) * 2;
+        return Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Icon(Icons.pending_actions,
-                  size: 18, color: Color(0xFFE65100)),
+              Expanded(child: _filaPendiente(items[i])),
               const SizedBox(width: 8),
-              const Text(
-                'Recibos Pendientes',
-                style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.bold,
-                    color: Color(0xFF212121)),
-              ),
-              const SizedBox(width: 8),
-              if (_recibosPendientes.isNotEmpty)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 2),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE65100).withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Text(
-                    '${_recibosPendientes.length}',
-                    style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                        color: Color(0xFFE65100)),
-                  ),
-                ),
+              if (i + 1 < items.length)
+                Expanded(child: _filaPendiente(items[i + 1]))
+              else
+                const Expanded(child: SizedBox()),
             ],
           ),
-          const SizedBox(height: 10),
+        );
+      },
+    );
+  }
 
-          if (_recibosPendientes.isEmpty)
+  Widget _headerPendientes(bool vacio) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+      child: Row(
+        children: [
+          const Icon(Icons.pending_actions,
+              size: 18, color: Color(0xFFE65100)),
+          const SizedBox(width: 8),
+          const Text(
+            'Recibos Pendientes',
+            style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+                color: Color(0xFF212121)),
+          ),
+          const SizedBox(width: 8),
+          if (!vacio)
             Container(
               padding:
-                  const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
               decoration: BoxDecoration(
-                color: const Color(0xFF2E7D32).withOpacity(0.06),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                    color: const Color(0xFF2E7D32).withOpacity(0.25)),
+                color: const Color(0xFFE65100).withOpacity(0.12),
+                borderRadius: BorderRadius.circular(12),
               ),
-              child: const Row(
-                children: [
-                  Icon(Icons.check_circle,
-                      color: Color(0xFF2E7D32), size: 18),
-                  SizedBox(width: 10),
-                  Text('Sin recibos pendientes este período',
-                      style: TextStyle(
-                          color: Color(0xFF2E7D32), fontSize: 13)),
-                ],
+              child: Text(
+                '$_totalPendientes',
+                style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                    color: Color(0xFFE65100)),
               ),
-            )
-          else
-            _gridPendientes(),
+            ),
+          if (_recibosPendientes.length < _totalPendientes) ...[
+            const SizedBox(width: 6),
+            Text(
+              '(mostrando ${_recibosPendientes.length})',
+              style: const TextStyle(
+                  fontSize: 11, color: Color(0xFF9E9E9E)),
+            ),
+          ],
         ],
       ),
     );
   }
 
-  /// Muestra los recibos pendientes en 2 columnas.
-  Widget _gridPendientes() {
-    final items = _recibosPendientes;
-    final rows = <Widget>[];
-    for (int i = 0; i < items.length; i += 2) {
-      rows.add(Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(child: _filaPendiente(items[i])),
-          const SizedBox(width: 8),
-          if (i + 1 < items.length)
-            Expanded(child: _filaPendiente(items[i + 1]))
-          else
-            const Expanded(child: SizedBox()),
-        ],
-      ));
-      if (i + 2 < items.length) rows.add(const SizedBox(height: 8));
-    }
-    return Column(children: rows);
+  Widget _vacioPendientes() {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: const Color(0x0D2E7D32),
+          borderRadius: const BorderRadius.all(Radius.circular(10)),
+          border: Border.all(color: const Color(0x402E7D32)),
+        ),
+        child: const Row(
+          children: [
+            Icon(Icons.check_circle, color: Color(0xFF2E7D32), size: 18),
+            SizedBox(width: 10),
+            Text('Sin recibos pendientes este período',
+                style: TextStyle(color: Color(0xFF2E7D32), fontSize: 13)),
+          ],
+        ),
+      ),
+    );
   }
+
+  /// Muestra los recibos pendientes en 2 columnas.
 
   Widget _filaPendiente(Map<String, dynamic> r) {
     final numero =

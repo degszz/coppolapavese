@@ -40,3 +40,19 @@ Thumbs.db
 
 # Dependencias
 pubspec.lock
+
+# Scripts temporales de sesiones de edición (no subir al repo)
+add_methods*.ps1
+add_prorroga_methods.js
+apply_*.js
+apply_*.py
+debug_hex.ps1
+fix*.ps1
+fix*.txt
+fix*.dart
+fix_contrato.py
+insert_methods.ps1
+opencode_temp_snippet.txt
+temp_check.txt
+nul
+coppolapavese

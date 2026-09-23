@@ -397,8 +397,19 @@ class PdfGenerator {
               textAlign: center ? pw.TextAlign.center : pw.TextAlign.left),
         );
 
+    // Fecha de la cuota: usar la persistida o, si no hay (recibos viejos),
+    // derivarla del mes/año de fecha_emision del recibo.
+    String? fechaFallback;
+    final feStr = recibo.fechaEmision;
+    if (feStr.isNotEmpty) {
+      try {
+        final fe = DateTime.parse(feStr);
+        fechaFallback = '${_mesesCompletosPdf[fe.month]} ${fe.year}';
+      } catch (_) {}
+    }
     final hasFecha = recibo.servicios.any(
-        (s) => s.fechaCuota != null && s.fechaCuota!.isNotEmpty);
+            (s) => s.fechaCuota != null && s.fechaCuota!.isNotEmpty) ||
+        fechaFallback != null;
     final hasFechaVence = recibo.servicios.any(
         (s) => s.fechaVence != null && s.fechaVence!.isNotEmpty);
     final fmtDate = DateFormat('dd/MM/yyyy');
@@ -414,6 +425,10 @@ class PdfGenerator {
           firstFechaIdx = i;
           break;
         }
+      }
+      if (firstFechaIdx == null && fechaFallback != null) {
+        fechaDisplay = _fmtMesAbrev(fechaFallback);
+        firstFechaIdx = 0;
       }
     }
 
@@ -464,7 +479,10 @@ class PdfGenerator {
               venceStr = s.fechaVence!;
             }
           }
-          final totalFila = s.monto + s.punitorios;
+          // Si el concepto es "Descontar al pago", se muestra en negativo
+          final totalFila = s.efectoInquilino == 'descontar'
+              ? -(s.monto + s.punitorios)
+              : s.monto + s.punitorios;
           return pw.TableRow(
             decoration: const pw.BoxDecoration(color: PdfColors.white),
             children: [

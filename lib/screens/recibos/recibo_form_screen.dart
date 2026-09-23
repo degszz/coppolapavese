@@ -78,7 +78,7 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
   bool           _uniAplicaTodos = true;
 
   // ── Cálculos ──────────────────────────────────────────────────
-  double get _montoTotal => _servicios.fold(0, (sum, s) => sum + s.total);
+  double get _montoTotal => _servicios.fold(0, (sum, s) => sum + s.totalConEfecto);
   double get _montoAbonado =>
       double.tryParse(_montoAbonadoCtrl.text.replaceAll(',', '.')) ?? 0;
   double get _saldo => _montoTotal - _montoAbonado;
@@ -121,57 +121,90 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
   /// emitida en la fecha [fechaEmision].
   ///
   /// La nota al pie muestra siempre en qué cuota del período va el recibo,
-  /// y avisa únicamente cuando faltan 2, 1 o 0 meses para el cambio de período.
+  /// y avisa cuando la cuota es la penúltima o la última del período:
+  /// - Penúltima del período → "el contrato está próximo a vencer"
+  /// - Última del período     → "habrá aumento de periodo en el próximo recibo"
   ///
   /// Itera los períodos en orden descendente (más reciente primero) para que
   /// ante solapamiento entre períodos viejos y nuevos gane la última definición.
-  ({String descripcion, String notaPeriodo}) _generarNotaPeriodo({
+  ({String descripcion, String notaPeriodo, int mesCuota}) _generarNotaPeriodo({
     required int numeroCuota,
     required int cuotasTotal,
     required DateTime fechaEmision,
     required List<Map<String, dynamic>> periodosData,
     required int mesEmision,
   }) {
-    final fechaCuotaStr = _calcularMesCuota(mesEmision, fechaEmision);
-    final desc = fechaCuotaStr.isNotEmpty
-        ? 'Alquiler Cuota N°$numeroCuota - $fechaCuotaStr'
-        : 'Alquiler Cuota N°$numeroCuota';
     final nota = StringBuffer();
 
     // Buscar el período al que pertenece esta cuota.
-    // Recorremos en orden DESC para que ante duplicados gane el más nuevo.
+    // Recorremos en orden DESC para que ante duplicados gane el más nuevo;
+    // ante solapamiento (prórroga vieja pisando períodos fijos) gana el
+    // período con el rango más chico (el más específico).
     Map<String, dynamic>? periodoActual;
     if (periodosData.isNotEmpty) {
       for (int i = periodosData.length - 1; i >= 0; i--) {
         final desde = periodosData[i]['cuota_desde'] as int;
         final hasta = periodosData[i]['cuota_hasta'] as int;
         if (numeroCuota >= desde && numeroCuota <= hasta) {
-          periodoActual = periodosData[i];
-          break;
+          final rangoActual = periodoActual == null
+              ? null
+              : (periodoActual['cuota_hasta'] as int) -
+                  (periodoActual['cuota_desde'] as int);
+          final mejor =
+              rangoActual == null || (hasta - desde) < rangoActual;
+          if (mejor) {
+            periodoActual = periodosData[i];
+          }
         }
       }
     }
 
-    // Aviso 1: ¿Última cuota del CONTRATO?
-    if (cuotasTotal > 0 && numeroCuota == cuotasTotal) {
-      nota.write('RECUERDE QUE EL CONTRATO DE ALQUILER ESTÁ PRÓXIMO A VENCER');
+    // ¿La cuota pertenece a una prórroga?
+    final esProrroga = periodoActual?['prorroga_id'] != null;
+    final mesProrroga = (periodoActual?['mes'] as num?)?.toInt() ?? 0;
+
+    // Mes de la cuota: si es prórroga y definió "Mes", ese manda; si no, el
+    // mes_emision del contrato.
+    final mesCuota = esProrroga && mesProrroga > 0 ? mesProrroga : mesEmision;
+    final fechaCuotaStr = _calcularMesCuota(mesCuota, fechaEmision);
+
+    final prefijo = esProrroga ? 'Alquiler Prórroga Cuota N°' : 'Alquiler Cuota N°';
+    final desc = fechaCuotaStr.isNotEmpty
+        ? '$prefijo$numeroCuota - $fechaCuotaStr'
+        : '$prefijo$numeroCuota';
+
+    final hasta = periodoActual?['cuota_hasta'] as int?;
+
+    // Aviso 1 (AMARILLO): penúltima cuota del período actual
+    if (periodoActual != null && hasta != null && numeroCuota == hasta - 1) {
+      nota.write('recuerde que el contrato de alquiler está próximo a vencer');
     }
 
-    // Aviso 2: ¿Última cuota del PERIODO FIJO? (solo si no es la última del contrato)
-    if (periodoActual != null && !(cuotasTotal > 0 && numeroCuota == cuotasTotal)) {
-      final hasta = periodoActual['cuota_hasta'] as int;
-      if (numeroCuota == hasta) {
+    // Aviso 2 (ROJO): última cuota del período actual
+    if (periodoActual != null && hasta != null && numeroCuota == hasta) {
+      if (nota.isNotEmpty) nota.write('\n');
+      nota.write('recuerde que habrá aumento de periodo en el próximo recibo');
+    }
+
+    // Aviso 3 (ROJO): última cuota del CONTRATO (si no fue capturada arriba)
+    if (cuotasTotal > 0 && numeroCuota == cuotasTotal) {
+      // Solo agregar si no es la última de un período que ya mostró aviso
+      if (!(periodoActual != null && hasta != null && numeroCuota == hasta)) {
         if (nota.isNotEmpty) nota.write('\n');
-        nota.write('RECUERDE QUE HABRÁ UN INCREMENTO EN EL PRÓXIMO PERIODO');
+        nota.write('recuerde que el contrato de alquiler está próximo a vencer');
       }
     }
 
-    return (descripcion: desc, notaPeriodo: nota.toString());
+    return (
+      descripcion: desc,
+      notaPeriodo: nota.toString(),
+      mesCuota: mesCuota,
+    );
   }
 
   static const _nombresMeses = [
-    '', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
-    'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+    '', 'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
+    'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic',
   ];
 
   String _calcularMesCuota(int mesEmision, DateTime fechaEmision) {
@@ -305,6 +338,10 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
         fila.punitorios = (sp['punitorios'] as num?)?.toDouble() ?? 0;
         fila.punitioriosCtrl.text = fila.punitorios.toStringAsFixed(0);
         fila.fechaVence = sp['fecha_vence'] as String?;
+        // Restaurar la fecha de la cuota (persistida) o derivarla del
+        // mes/año de emisión como fallback para recibos viejos.
+        fila.fechaCuota = (sp['fecha_cuota'] as String?) ?? _calcularMesCuota(fechaEmis.month, fechaEmis);
+        fila.efectoInqString = sp['efecto_inquilino'] as String? ?? 'sin_efecto';
         _servicios.add(fila);
       }
       if (_servicios.isEmpty) {
@@ -323,7 +360,7 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
     final serviciosPrev = await _db.obtenerServiciosUltimoRecibo(contratoId);
 
     // Cargar períodos fijos para generar nota de caducidad
-    final periodosData = await _db.obtenerPeriodosPorContrato(contratoId);
+    final periodosData = await _db.obtenerTodosLosPeriodos(contratoId);
 
     // Build inquilino name
     final inqNombre = c['inquilino_nombre'] as String? ?? '';
@@ -337,7 +374,7 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
 
     // Descripción y nota de período
     final now = DateTime.now();
-    final (:descripcion, :notaPeriodo) = _generarNotaPeriodo(
+    final (:descripcion, :notaPeriodo, :mesCuota) = _generarNotaPeriodo(
       numeroCuota: numeroCuota,
       cuotasTotal: cuotasTotal,
       fechaEmision: now,
@@ -347,7 +384,7 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
     final desc = descripcion;
 
     // Calcular fecha de la cuota (mes en letra + año)
-    final fechaCuota = _calcularMesCuota(mesEmision, now);
+    final fechaCuota = _calcularMesCuota(mesCuota, now);
 
     setState(() {
       _contratoSel = c;
@@ -389,6 +426,7 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
         fila.montoCtrl.text = fila.monto.toStringAsFixed(0);
         fila.fechaVence = sp['fecha_vence'] as String?;
         fila.fechaCuota = fechaCuota;
+        fila.efectoInqString = sp['efecto_inquilino'] as String? ?? 'sin_efecto';
         _servicios.add(fila);
       }
 
@@ -430,10 +468,14 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
               total: sinPunitorios ? s.monto : s.total,
               fechaVence: s.fechaVence,
               fechaCuota: s.fechaCuota,
+              efectoInquilino: s.efectoInqString,
             ))
         .toList();
-    final montoTotalSP =
-        _servicios.fold<double>(0, (sum, s) => sum + s.monto);
+    final montoTotalSP = _servicios.fold<double>(
+        0,
+        (sum, s) =>
+            sum +
+            (s.efectoInq == EfectoConcepto.descontar ? -s.monto : s.monto));
     return ReciboModel(
       id: reciboId,
       numeroRecibo: _numeroRecibo,
@@ -505,6 +547,8 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
               'punitorios': s.punitorios,
               'total': s.total,
               'fecha_vence': s.fechaVence,
+              'fecha_cuota': s.fechaCuota,
+              'efecto_inquilino': s.efectoInqString,
             });
           }
         }
@@ -537,13 +581,18 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
               'punitorios': s.punitorios,
               'total': s.total,
               'fecha_vence': s.fechaVence,
+              'fecha_cuota': s.fechaCuota,
+              'efecto_inquilino': s.efectoInqString,
             });
           }
         }
-        // Avanzar mes_emision del contrato al siguiente mes (12 -> 1)
+        // Avanzar mes_emision y actualizar cuota_inicial del contrato
         final cid = _contratoSel?['id'] as int?;
         if (cid != null) {
-          await _db.avanzarMesEmisionContrato(cid);
+          final proximaCuota = _numeroCuota + 1;
+          final mesActual = (_contratoSel?['mes_emision'] as int?) ?? 1;
+          final nuevoMes = mesActual >= 12 ? 1 : mesActual + 1;
+          await _db.actualizarCuotaInicialYMesContrato(cid, proximaCuota, nuevoMes);
         }
         recibo = _buildReciboModel(reciboId: reciboId);
       }
@@ -643,8 +692,8 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
     final nuevoMonto = await _db.obtenerMontoPeriodo(contratoId, nuevaCuota);
 
     // Nota automática con períodos
-    final periodosData = await _db.obtenerPeriodosPorContrato(contratoId);
-    final (:descripcion, :notaPeriodo) = _generarNotaPeriodo(
+    final periodosData = await _db.obtenerTodosLosPeriodos(contratoId);
+    final (:descripcion, :notaPeriodo, :mesCuota) = _generarNotaPeriodo(
       numeroCuota: nuevaCuota,
       cuotasTotal: _cuotasTotal,
       fechaEmision: nuevaEmision,
@@ -652,7 +701,7 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
       mesEmision: nuevoMes,
     );
     final desc = descripcion;
-    final fechaCuota = _calcularMesCuota(nuevoMes, nuevaEmision);
+    final fechaCuota = _calcularMesCuota(mesCuota, nuevaEmision);
 
     setState(() {
       _fechaEmision = nuevaEmision;
@@ -724,8 +773,8 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
     final nuevoMonto = await _db.obtenerMontoPeriodo(contratoId, nuevaCuota);
 
     // Nota automática con períodos
-    final periodosData = await _db.obtenerPeriodosPorContrato(contratoId);
-    final (:descripcion, :notaPeriodo) = _generarNotaPeriodo(
+    final periodosData = await _db.obtenerTodosLosPeriodos(contratoId);
+    final (:descripcion, :notaPeriodo, :mesCuota) = _generarNotaPeriodo(
       numeroCuota: nuevaCuota,
       cuotasTotal: _cuotasTotal,
       fechaEmision: nuevaEmision,
@@ -733,7 +782,7 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
       mesEmision: nuevoMes,
     );
     final desc = descripcion;
-    final fechaCuota = _calcularMesCuota(nuevoMes, nuevaEmision);
+    final fechaCuota = _calcularMesCuota(mesCuota, nuevaEmision);
 
     setState(() {
       _fechaEmision = nuevaEmision;
@@ -2365,6 +2414,24 @@ class _FilaServicio {
 
   EfectoConcepto efectoInq = EfectoConcepto.sinEfecto;
   EfectoConcepto efectoProp = EfectoConcepto.sinEfecto;
+
+  /// Total con signo: si el efecto es "Descontar al pago", resta.
+  double get totalConEfecto =>
+      efectoInq == EfectoConcepto.descontar ? -(monto + punitorios) : (monto + punitorios);
+
+  String get efectoInqString => switch (efectoInq) {
+        EfectoConcepto.descontar => 'descontar',
+        EfectoConcepto.sumar => 'sumar',
+        EfectoConcepto.sinEfecto => 'sin_efecto',
+      };
+
+  set efectoInqString(String s) {
+    efectoInq = switch (s) {
+      'descontar' => EfectoConcepto.descontar,
+      'sumar' => EfectoConcepto.sumar,
+      _ => EfectoConcepto.sinEfecto,
+    };
+  }
 
   final descripcionCtrl = TextEditingController();
   final montoCtrl = TextEditingController();

@@ -123,8 +123,8 @@ class ExcelGenerator {
       sumAdm += adm;
       sumProp += totalProp;
 
-      // Observaciones = servicios del recibo (con precios)
-      String obs = entry.servicios.isNotEmpty ? entry.servicios : 'Sin servicios';
+      // Observaciones = servicios del último recibo del contrato (con precios)
+      String obs = _formatearServicios(entry.servicios);
 
       final fila = sheet.maxRows;
       sheet.appendRow([
@@ -165,17 +165,16 @@ class ExcelGenerator {
       '',
     ]);
 
-    // ── Ajustar anchos de columnas para A4 landscape ──
-    // Más altos, menos anchos para que quepa en una hoja al fotocopiar
-    _ajustarAnchos(sheet, [35, 38, 20, 16, 22, 55]);
+    // ── Ajustar anchos de columnas para A4 portrait ──
+    _ajustarAnchos(sheet, [10.29, 19.71, 10.86, 10.71, 13.00, 31.14]);
 
     // Altura de filas: más altas para fotocopia
     for (int r = 0; r < sheet.maxRows; r++) {
-      sheet.setRowHeight(r, 36);
+      sheet.setRowHeight(r, 48);
     }
     // Filas de encabezado un poco más altas
     for (int r = 0; r < 5; r++) {
-      sheet.setRowHeight(r, 40);
+      sheet.setRowHeight(r, 52);
     }
   }
 
@@ -223,19 +222,19 @@ class ExcelGenerator {
       cell.cellStyle = CellStyle(
         bold: true,
         fontSize: 12,
-        fontColorHex: _magentaBorder,
+        fontColorHex: _blackFont, // Texto negro para impresión B&N
         backgroundColorHex: _whiteFill, // Fondo blanco para impresión B&N
         horizontalAlign: HorizontalAlign.Center,
         verticalAlign: VerticalAlign.Center,
         textWrapping: TextWrapping.WrapText,
         topBorder: Border(
-            borderStyle: BorderStyle.Medium, borderColorHex: _magentaBorder),
+            borderStyle: BorderStyle.Medium, borderColorHex: _blackFont),
         bottomBorder: Border(
-            borderStyle: BorderStyle.Medium, borderColorHex: _magentaBorder),
+            borderStyle: BorderStyle.Medium, borderColorHex: _blackFont),
         leftBorder: Border(
-            borderStyle: BorderStyle.Thin, borderColorHex: _magentaBorder),
+            borderStyle: BorderStyle.Thin, borderColorHex: _blackFont),
         rightBorder: Border(
-            borderStyle: BorderStyle.Thin, borderColorHex: _magentaBorder),
+            borderStyle: BorderStyle.Thin, borderColorHex: _blackFont),
       );
     }
   }
@@ -250,20 +249,20 @@ class ExcelGenerator {
         bold: true,
         fontSize: 13,
         backgroundColorHex: _whiteFill, // Fondo blanco para impresión B&N
-        fontColorHex: _magentaBorder,
+        fontColorHex: _blackFont,
         topBorder: Border(
-            borderStyle: BorderStyle.Medium, borderColorHex: _magentaBorder),
+            borderStyle: BorderStyle.Medium, borderColorHex: _blackFont),
         bottomBorder: Border(
-            borderStyle: BorderStyle.Medium, borderColorHex: _magentaBorder),
+            borderStyle: BorderStyle.Medium, borderColorHex: _blackFont),
         leftBorder: Border(
-            borderStyle: BorderStyle.Thin, borderColorHex: _magentaBorder),
+            borderStyle: BorderStyle.Thin, borderColorHex: _blackFont),
         rightBorder: Border(
-            borderStyle: BorderStyle.Thin, borderColorHex: _magentaBorder),
+            borderStyle: BorderStyle.Thin, borderColorHex: _blackFont),
       );
     }
   }
 
-  static void _ajustarAnchos(Sheet sheet, List<int> anchos) {
+  static void _ajustarAnchos(Sheet sheet, List<num> anchos) {
     for (int i = 0; i < anchos.length; i++) {
       sheet.setColumnWidth(i, anchos[i].toDouble());
     }
@@ -273,6 +272,30 @@ class ExcelGenerator {
     if (valor is int) return IntCellValue(valor);
     if (valor is double) return DoubleCellValue(valor);
     return TextCellValue(valor?.toString() ?? '');
+  }
+
+  /// Formatea los servicios del recibo ("descripcion~monto" separados por '|')
+  /// como "descripcion: $monto, ...". Devuelve "Sin servicios" si no hay.
+  static String _formatearServicios(String raw) {
+    final partes = raw
+        .split('|')
+        .map((p) => p.trim())
+        .where((p) => p.isNotEmpty)
+        .toList();
+    if (partes.isEmpty) return 'Sin servicios';
+
+    final items = <String>[];
+    for (final parte in partes) {
+      final kv = parte.split('~');
+      if (kv.length != 2) {
+        items.add(parte);
+        continue;
+      }
+      final desc = kv[0].trim();
+      final monto = double.tryParse(kv[1]) ?? 0;
+      items.add('$desc: ${_fmtMonto.format(monto)}');
+    }
+    return items.join(', ');
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -327,8 +350,8 @@ class ExcelGenerator {
 
     final printBlock =
         '<printOptions horizontalCentered="1"/>'
-        '<pageMargins left="0.4" right="0.4" top="0.5" bottom="0.5" header="0.2" footer="0.2"/>'
-        '<pageSetup paperSize="9" orientation="landscape" fitToWidth="1" fitToHeight="0" horizontalDpi="300" verticalDpi="300"/>';
+        '<pageMargins left="0.25" right="0.25" top="0.75" bottom="0.75" header="0.2" footer="0.2"/>'
+        '<pageSetup paperSize="9" orientation="portrait" fitToWidth="1" fitToHeight="1" horizontalDpi="300" verticalDpi="300"/>';
 
     xml = xml.replaceFirst('</worksheet>', '$printBlock</worksheet>');
     return xml;

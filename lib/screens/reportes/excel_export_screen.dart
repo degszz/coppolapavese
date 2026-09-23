@@ -33,7 +33,7 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
   Map<String, int> _conteoGeneral = {};
   double _cobradoMes = 0.0;
   double _pendienteTotal = 0.0;
-  List<_DatoMensual> _datosMensuales = [];
+  
   List<_DatoFinanciero> _datosFinancieros = [];
   List<_DatoContratos> _datosContratos = [];
 
@@ -44,6 +44,9 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
   List<Map<String, dynamic>> _propietarios = [];
   List<Map<String, dynamic>> _propiedadesDelPropietario = [];
   Set<int> _propiedadesSeleccionadas = {};
+  final _busquedaPropController = TextEditingController();
+  String _consultaProp = '';
+  bool _propietariosExpandido = false;
 
   final _fmtNombre = DateFormat('yyyyMMdd_HHmm');
   final _fmtFechaCompleta = DateFormat('dd/MM/yyyy');
@@ -53,6 +56,15 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
     super.initState();
     _cargarEstadisticas();
     _cargarPropietarios();
+    _busquedaPropController.addListener(() {
+      setState(() => _consultaProp = _busquedaPropController.text);
+    });
+  }
+
+  @override
+  void dispose() {
+    _busquedaPropController.dispose();
+    super.dispose();
   }
 
   Future<void> _cargarPropietarios() async {
@@ -86,30 +98,10 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
     final conteo = await _db.obtenerConteoGeneral();
     final contratosPorMes = await _db.obtenerContratosPorMes(meses: 12);
 
-    final mapasMensual = <String, int>{};
-    for (final r in recibos) {
-      final fecha = r['fecha_emision'] as String? ?? '';
-      if (fecha.length >= 7) {
-        final clave = fecha.substring(0, 7);
-        mapasMensual[clave] = (mapasMensual[clave] ?? 0) + 1;
-      }
-    }
     const mesesEs = [
       '', 'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
       'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'
     ];
-    final ahora = DateTime.now();
-    final meses = <_DatoMensual>[];
-    for (int i = 5; i >= 0; i--) {
-      int m = ahora.month - i;
-      int y = ahora.year;
-      while (m < 1) { m += 12; y--; }
-      final clave = '$y-${m.toString().padLeft(2, '0')}';
-      meses.add(_DatoMensual(
-        etiqueta: mesesEs[m],
-        cantidad: mapasMensual[clave] ?? 0,
-      ));
-    }
 
     // Datos financieros para gráfica de línea
     final datFin = <_DatoFinanciero>[];
@@ -152,7 +144,6 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
       _conteoGeneral = conteo;
       _cobradoMes = (stats['cobrado_mes'] as num?)?.toDouble() ?? 0.0;
       _pendienteTotal = (stats['pendiente_total'] as num?)?.toDouble() ?? 0.0;
-      _datosMensuales = meses;
       _datosFinancieros = datFin;
       _datosContratos = datContr;
     });
@@ -195,13 +186,7 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
           _panelReporteConFiltros(),
           const SizedBox(height: 12),
           // ── Gráficas abajo del reporte ──
-          Column(
-            children: [
-              _panelGraficas(),
-              const SizedBox(height: 12),
-              _panelGraficaContratos(),
-            ],
-          ),
+          _panelGraficaContratos(),
           const SizedBox(height: 24),
         ],
       ),
@@ -211,6 +196,15 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
   // ════════════════════════════════════════════════════════════════
   // PANEL: REPORTE + FILTROS
   // ════════════════════════════════════════════════════════════════
+
+  List<Map<String, dynamic>> _propietariosFiltrados() {
+    final q = _consultaProp.trim().toLowerCase();
+    if (q.isEmpty) return _propietarios;
+    return _propietarios
+        .where((p) =>
+            ((p['nombre'] as String? ?? '').toLowerCase().contains(q)))
+        .toList();
+  }
 
   Widget _panelReporteConFiltros() {
     return Row(
@@ -336,17 +330,32 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  // Propietarios (múltiples) - Chips seleccionables
+                  // Propietarios (múltiples) - dropdown desplegable
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Row(
                         children: [
-                          const Text('Propietarios:',
-                              style: TextStyle(
-                                  fontSize: 11,
-                                  fontWeight: FontWeight.w600,
-                                  color: Color(0xFF424242))),
+                          Icon(
+                            _propietariosExpandido
+                                ? Icons.expand_more
+                                : Icons.expand_less,
+                            size: 18,
+                            color: const Color(0xFF1565C0),
+                          ),
+                          const SizedBox(width: 4),
+                          InkWell(
+                            onTap: () => setState(() {
+                              _propietariosExpandido =
+                                  !_propietariosExpandido;
+                            }),
+                            borderRadius: BorderRadius.circular(6),
+                            child: const Text('Propietarios',
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF1565C0))),
+                          ),
                           const Spacer(),
                           if (_propietariosSeleccionados.isNotEmpty)
                             TextButton.icon(
@@ -362,51 +371,135 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
                                   foregroundColor: const Color(0xFFC62828),
                                   padding: EdgeInsets.zero,
                                   minimumSize: const Size(0, 28),
-                                  tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                                  tapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap),
                             ),
                         ],
                       ),
-                      const SizedBox(height: 6),
-                      Wrap(
-                        spacing: 6,
-                        runSpacing: 6,
-                        children: _propietarios.map((p) {
+                      // Contenido desplegable: búsqueda + lista
+                      if (_propietariosExpandido) ...[
+                        const SizedBox(height: 6),
+                        // Campo de búsqueda por teclado
+                        TextField(
+                          controller: _busquedaPropController,
+                          decoration: InputDecoration(
+                            hintText: 'Buscar propietario por teclado...',
+                            prefixIcon: const Icon(Icons.search, size: 18),
+                            suffixIcon: _consultaProp.isNotEmpty
+                                ? IconButton(
+                                    icon: const Icon(Icons.clear, size: 16),
+                                    onPressed: _busquedaPropController.clear,
+                                  )
+                                : null,
+                            isDense: true,
+                            filled: true,
+                            fillColor: const Color(0xFF1565C0)
+                                .withValues(alpha: 0.05),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: const BorderSide(
+                                  color: Color(0xFFE0E0E0)),
+                            ),
+                            enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8),
+                              borderSide: const BorderSide(
+                                  color: Color(0xFFE0E0E0)),
+                            ),
+                            contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 8),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        // Resultados de búsqueda con botón +
+                        ..._propietariosFiltrados().take(50).map((p) {
                           final id = p['id'] as int;
-                          final nombre = p['nombre'] as String? ?? 'Sin nombre';
-                          final selected = _propietariosSeleccionados.contains(id);
-                          return FilterChip(
-                            label: Text(nombre,
-                                style: TextStyle(
-                                    fontSize: 11,
-                                    color: selected
-                                        ? Colors.white
-                                        : const Color(0xFF424242)),
-                                overflow: TextOverflow.ellipsis),
-                            selected: selected,
-                            selectedColor: const Color(0xFF1565C0),
-                            checkmarkColor: Colors.white,
-                            backgroundColor:
-                                const Color(0xFF1565C0).withValues(alpha: 0.08),
-                            side: BorderSide(
-                                color: const Color(0xFF1565C0)
-                                    .withValues(alpha: 0.3)),
-                            onSelected: (sel) {
-                              setState(() {
-                                if (sel) {
-                                  _propietariosSeleccionados.add(id);
-                                } else {
-                                  _propietariosSeleccionados.remove(id);
-                                }
-                                _propiedadesDelPropietario = [];
-                                _propiedadesSeleccionadas = {};
-                              });
-                              if (_propietariosSeleccionados.isNotEmpty) {
-                                _cargarPropiedadesDePropietarios();
-                              }
-                            },
+                          final nombre =
+                              p['nombre'] as String? ?? 'Sin nombre';
+                          final yaAgregado =
+                              _propietariosSeleccionados.contains(id);
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Text(nombre,
+                                      style: const TextStyle(
+                                          fontSize: 12,
+                                          color: Color(0xFF424242)),
+                                      overflow: TextOverflow.ellipsis),
+                                ),
+                                if (!yaAgregado)
+                                  IconButton(
+                                    onPressed: () {
+                                      setState(() {
+                                        _propietariosSeleccionados.add(id);
+                                        _propiedadesDelPropietario = [];
+                                        _propiedadesSeleccionadas = {};
+                                      });
+                                      _cargarPropiedadesDePropietarios();
+                                    },
+                                    icon: const Icon(Icons.add,
+                                        color: Color(0xFF1565C0), size: 20),
+                                    tooltip: 'Agregar a la exportación',
+                                    visualDensity: VisualDensity.compact,
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(
+                                        minWidth: 32, minHeight: 28),
+                                  )
+                                else
+                                  const Icon(Icons.check_circle,
+                                      color: Color(0xFF2E7D32), size: 18),
+                              ],
+                            ),
                           );
-                        }).toList(),
-                      ),
+                        }),
+                        if (_consultaProp.isNotEmpty &&
+                            _propietariosFiltrados().isEmpty)
+                          const Padding(
+                            padding: EdgeInsets.only(top: 4),
+                            child: Text('Sin resultados',
+                                style: TextStyle(
+                                    fontSize: 11, color: Color(0xFF9E9E9E))),
+                          ),
+                      ],
+                      // Chips de propietarios seleccionados (siempre visibles)
+                      if (_propietariosSeleccionados.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: _propietarios
+                              .where((p) => _propietariosSeleccionados
+                                  .contains(p['id'] as int))
+                              .map((p) {
+                            final id = p['id'] as int;
+                            final nombre =
+                                p['nombre'] as String? ?? 'Sin nombre';
+                            return Chip(
+                              label: Text(nombre,
+                                  style: const TextStyle(
+                                      fontSize: 11, color: Colors.white),
+                                  overflow: TextOverflow.ellipsis),
+                              backgroundColor: const Color(0xFF1565C0),
+                              deleteIcon: const Icon(Icons.close,
+                                  size: 15, color: Colors.white),
+                              onDeleted: () {
+                                setState(() {
+                                  _propietariosSeleccionados.remove(id);
+                                  _propiedadesDelPropietario = [];
+                                  _propiedadesSeleccionadas = {};
+                                });
+                                if (_propietariosSeleccionados.isNotEmpty) {
+                                  _cargarPropiedadesDePropietarios();
+                                }
+                              },
+                              visualDensity: VisualDensity.compact,
+                              materialTapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
+                            );
+                          }).toList(),
+                        ),
+                      ],
                     ],
                   ),
                   // Propiedades de los propietarios seleccionados
@@ -1109,34 +1202,6 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
     );
   }
 
-  Widget _panelGraficas() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            _tituloSeccion('Recibos por Mes (últimos 6)', Icons.bar_chart_outlined),
-            const SizedBox(height: 16),
-            SizedBox(
-              height: 180,
-              child: _datosMensuales.isEmpty
-                  ? const Center(
-                      child: Text('Sin datos',
-                          style: TextStyle(
-                              color: Color(0xFF9E9E9E))))
-                  : CustomPaint(
-                      painter: _BarChartPainter(
-                          datos: _datosMensuales),
-                      size: Size.infinite,
-                    ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _panelResumenApp() {
     final c = _conteoGeneral;
     return Card(
@@ -1309,12 +1374,6 @@ class _ExcelExportScreenState extends State<ExcelExportScreen> {
 
 // ── Data models ─────────────────────────────────────────────────────
 
-class _DatoMensual {
-  final String etiqueta;
-  final int cantidad;
-  const _DatoMensual({required this.etiqueta, required this.cantidad});
-}
-
 class _DatoFinanciero {
   final String etiqueta;
   final double emitido;
@@ -1392,69 +1451,6 @@ class _DonutChartPainter extends CustomPainter {
       old.pagados != pagados ||
       old.pendientes != pendientes ||
       old.total != total;
-}
-
-class _BarChartPainter extends CustomPainter {
-  final List<_DatoMensual> datos;
-  _BarChartPainter({required this.datos});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    if (datos.isEmpty) return;
-    final maxVal =
-        datos.map((d) => d.cantidad).reduce((a, b) => a > b ? a : b);
-    final barPaint = Paint()..color = const Color(0xFFC2185B);
-    final emptyPaint = Paint()..color = const Color(0xFFEEEEEE);
-    final tp = TextPainter(textDirection: ui.TextDirection.ltr);
-
-    final slotW = size.width / datos.length;
-    final barW = slotW * 0.55;
-    const topPad = 18.0;
-    const bottomPad = 22.0;
-    final maxBarH = size.height - topPad - bottomPad;
-
-    for (int i = 0; i < datos.length; i++) {
-      final d = datos[i];
-      final x = i * slotW + (slotW - barW) / 2;
-
-      if (maxVal == 0) {
-        canvas.drawRRect(
-            RRect.fromRectAndRadius(
-                Rect.fromLTWH(x, topPad, barW, maxBarH),
-                const Radius.circular(4)),
-            emptyPaint);
-      } else {
-        final barH = (d.cantidad / maxVal) * maxBarH;
-        final y = topPad + (maxBarH - barH);
-        canvas.drawRRect(
-            RRect.fromRectAndRadius(
-                Rect.fromLTWH(x, y, barW, barH),
-                const Radius.circular(4)),
-            barPaint);
-        if (d.cantidad > 0) {
-          tp.text = TextSpan(
-              text: '${d.cantidad}',
-              style: const TextStyle(
-                  fontSize: 9,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFF424242)));
-          tp.layout();
-          tp.paint(canvas,
-              Offset(x + (barW - tp.width) / 2, y - topPad + 2));
-        }
-      }
-      tp.text = TextSpan(
-          text: d.etiqueta,
-          style:
-              const TextStyle(fontSize: 10, color: Color(0xFF757575)));
-      tp.layout();
-      tp.paint(canvas,
-          Offset(x + (barW - tp.width) / 2, size.height - bottomPad + 4));
-    }
-  }
-
-  @override
-  bool shouldRepaint(_BarChartPainter old) => old.datos != datos;
 }
 
 class _LineChartPainter extends CustomPainter {

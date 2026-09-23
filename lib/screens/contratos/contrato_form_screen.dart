@@ -6,6 +6,7 @@ import '../../database/database_helper.dart';
 import '../../models/propiedad_model.dart';
 import '../../models/inquilino_model.dart';
 import '../../models/periodo_fijo_model.dart';
+import '../../models/prorroga_model.dart';
 import '../../utils/snackbar_helper.dart';
 
 // ════════════════════════════════════════════════════════════
@@ -29,6 +30,19 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
     'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun',
     'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic',
   ];
+
+  /// Convierte el label abreviado de mes (ej. 'Ene') a su número (1-12).
+  /// Devuelve 0 si no coincide.
+  static int _mesAbrevToNum(String label) {
+    final idx = _mesesAbrev.indexOf(label.trim());
+    return idx >= 0 ? idx + 1 : 0;
+  }
+
+  /// Convierte el número de mes (1-12) a su label abreviado.
+  static String _mesNumToAbrev(int mes) {
+    final idx = (mes - 1).clamp(0, 11);
+    return _mesesAbrev[idx];
+  }
 
   final DatabaseHelper _db = DatabaseHelper();
   bool _guardando = false;
@@ -83,6 +97,24 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
   // ── Garantes ──────────────────────────────────────────────
   List<Map<String, dynamic>> _garantes = [];
 
+  // ── Prórroga ──────────────────────────────────────────────
+  ProrrogaModel? _prorroga;
+  List<ProrrogaModel> _prorrogasContrato = [];
+  bool _prorrogaExpandida = false;
+  bool _periodosMinimizados = false;
+  bool _prorrogaTablaMinimizada = false;
+  bool _prorrogaEliminada = false;
+  final _prorrogaFechaInicioCtrl = TextEditingController();
+  final _prorrogaFechaFinCtrl = TextEditingController();
+  final _prorrogaCuotasCtrl = TextEditingController();
+  final _prorrogaMontoCtrl = TextEditingController();
+  final _prorrogaAlquilerCtrl = TextEditingController();
+  final _prorrogaHastaCuotaCtrl = TextEditingController();
+  final _prorrogaPorcentajeCtrl = TextEditingController();
+  final _prorrogaVaPorCtrl = TextEditingController(text: '1');
+  final _prorrogaMesCtrl = TextEditingController(text: 'Ene');
+  List<_ProrrogaPeriodoRow> _prorrogaPeriodosExtra = [];
+
   @override
   void initState() {
     super.initState();
@@ -100,6 +132,22 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
       r.montoCtrl.dispose();
       r.hastaCtrl.dispose();
       r.porcentajeCtrl.dispose();
+    }
+    _prorrogaFechaInicioCtrl.dispose();
+    _prorrogaFechaFinCtrl.dispose();
+    _prorrogaCuotasCtrl.dispose();
+    _prorrogaMontoCtrl.dispose();
+    _prorrogaAlquilerCtrl.dispose();
+    _prorrogaHastaCuotaCtrl.dispose();
+    _prorrogaPorcentajeCtrl.dispose();
+    _prorrogaVaPorCtrl.dispose();
+    _prorrogaMesCtrl.dispose();
+    for (final r in _prorrogaPeriodosExtra) {
+      r.montoCtrl.dispose();
+      r.hastaCtrl.dispose();
+      r.porcentajeCtrl.dispose();
+      r.vaPorCtrl.dispose();
+      r.mesCtrl.dispose();
     }
     _primerDiaPagoCtrl.dispose();
     _diasGraciaCtrl.dispose();
@@ -201,8 +249,12 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
         // Cargar períodos fijos y garantes
         final contratoId = d['id'] as int?;
         if (contratoId != null) {
-          final periodosMaps =
-              await _db.obtenerPeriodosPorContrato(contratoId);
+          // Paralelizar consultas independientes (períodos + garantes)
+          final results = await Future.wait<dynamic>([
+            _db.obtenerPeriodosPorContrato(contratoId),
+            _db.obtenerGarantesPorContrato(contratoId),
+          ]);
+          final periodosMaps = results[0] as List<Map<String, dynamic>>;
           _periodosFijos = periodosMaps
               .map((m) => PeriodoFijoModel.fromMap(m))
               .toList();
@@ -210,9 +262,10 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
           _cargarPeriodosEnFilas();
           // Sincronizar _periodosFijos con controllers
           _recalcularPeriodos();
-          _garantes = (await _db.obtenerGarantesPorContrato(contratoId))
+          _garantes = (results[1] as List<Map<String, dynamic>>)
               .map((g) => Map<String, dynamic>.from(g))
               .toList();
+          await _cargarProrroga(contratoId);
         }
       }
 
@@ -329,6 +382,13 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
       return;
     }
 
+    final errorProrroga = _validarProrroga();
+    if (errorProrroga != null) {
+      mostrarNotificacion(context,
+          texto: errorProrroga, color: const Color(0xFFC62828));
+      return;
+    }
+
     setState(() => _guardando = true);
     try {
       // Sincronizar _cuotasTotal con el controller, por si el último
@@ -386,13 +446,15 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
           .toList();
 
       // Guardar todo en una transacción atómica
-      await _db.guardarContratoCompleto(
+      final contratoId = await _db.guardarContratoCompleto(
         datos: datos,
         periodos: periodosMaps,
         garantes: _garantes,
         esEdicion: _esEdicion,
         contratoIdExistente: _esEdicion ? widget.datosExistentes!['id'] as int : null,
       );
+
+      await _guardarProrroga(contratoId);
 
       if (mounted) {
         mostrarNotificacion(context,
@@ -559,6 +621,39 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
     );
   }
 
+  /// Dropdown de mes para los períodos de prórroga. Lee/escribe el mes
+  /// (índice 1-12 ↔ `_mesesAbrev`) en el controller proporcionado.
+  Widget _buildMesDropdownPrrorroga(TextEditingController ctrl) {
+    int sel = _mesesAbrev.indexOf(ctrl.text) + 1;
+    if (sel < 1 || sel > 12) sel = 1;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: BoxDecoration(
+        border: Border.all(color: const Color(0xFFBDBDBD)),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<int>(
+          value: sel,
+          isDense: true,
+          style: const TextStyle(fontSize: 12, color: Colors.black87),
+          items: List.generate(12, (i) {
+            final mes = i + 1;
+            return DropdownMenuItem(
+              value: mes,
+              child: Text(_mesesAbrev[i], style: const TextStyle(fontSize: 11)),
+            );
+          }),
+          onChanged: (v) {
+            if (v != null) {
+              setState(() => ctrl.text = _mesesAbrev[v - 1]);
+            }
+          },
+        ),
+      ),
+    );
+  }
+
   /// Recalcula períodos desde los controllers existentes, sin auto-generar filas.
   void _recalcularPeriodos() {
     final monto1 = double.tryParse(_alquilerCtrl.text) ?? 0;
@@ -701,6 +796,8 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                         _seccionInquilino(),
                         const SizedBox(height: 16),
                         _seccionPeriodos(),
+                        const SizedBox(height: 16),
+                        _seccionProrroga(),
                       ],
                     ),
                   ),
@@ -940,6 +1037,8 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
     return _seccionCard(
       titulo: 'Períodos',
       icono: Icons.calendar_month_outlined,
+      collapsed: _periodosMinimizados,
+      onToggle: () => setState(() => _periodosMinimizados = !_periodosMinimizados),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1373,6 +1472,850 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
     );
   }
 
+  // ════════════════════════════════════════════════════════════
+  // PRÓRROGA
+  // ════════════════════════════════════════════════════════════
+
+  /// Carga la prórroga activa del contrato y vuelca sus períodos a la UI.
+  Future<void> _cargarProrroga(int contratoId) async {
+    final activa = await _db.obtenerProrrogaActiva(contratoId);
+    if (activa == null) return;
+
+    final periodos = await _db.obtenerProrrogaPeriodos(activa['id'] as int);
+    _prorroga = ProrrogaModel.fromMap(activa).copyWith(
+      periodos: periodos
+          .map((p) => ProrrogaPeriodoModel.fromMap(p))
+          .toList(),
+    );
+    _prorrogasContrato =
+        (await _db.obtenerProrrogasPorContrato(contratoId))
+            .map((p) => ProrrogaModel.fromMap(p))
+            .toList();
+
+    _prorrogaFechaInicioCtrl.text = _prorroga!.fechaInicio;
+    _prorrogaFechaFinCtrl.text = _prorroga!.fechaFin;
+    _prorrogaCuotasCtrl.text = _prorroga!.cuotasTotal.toString();
+    _prorrogaMontoCtrl.text = _prorroga!.montoBase.toStringAsFixed(0);
+
+    // Período 1 (principal)
+    if (_prorroga!.periodos.isNotEmpty) {
+      final p0 = _prorroga!.periodos.first;
+      _prorrogaAlquilerCtrl.text = p0.monto.toStringAsFixed(0);
+      _prorrogaHastaCuotaCtrl.text = p0.cuotaHasta.toString();
+      _prorrogaPorcentajeCtrl.text =
+          p0.porcentaje > 0 ? p0.porcentaje.toStringAsFixed(1) : '';
+      _prorrogaVaPorCtrl.text =
+          (p0.vaPor > 0 ? p0.vaPor : p0.cuotaDesde).toString();
+      _prorrogaMesCtrl.text = p0.mes > 0 ? _mesNumToAbrev(p0.mes) : _mesesAbrev[0];
+    }
+
+    // Períodos extra
+    for (final r in _prorrogaPeriodosExtra) {
+      r.montoCtrl.dispose();
+      r.hastaCtrl.dispose();
+      r.porcentajeCtrl.dispose();
+      r.vaPorCtrl.dispose();
+      r.mesCtrl.dispose();
+    }
+    _prorrogaPeriodosExtra = [];
+    for (int i = 1; i < _prorroga!.periodos.length; i++) {
+      final p = _prorroga!.periodos[i];
+      _prorrogaPeriodosExtra.add(_ProrrogaPeriodoRow(
+        montoCtrl: TextEditingController(text: p.monto.toStringAsFixed(0)),
+        hastaCtrl: TextEditingController(text: p.cuotaHasta.toString()),
+        porcentajeCtrl: TextEditingController(
+            text: p.porcentaje > 0 ? p.porcentaje.toStringAsFixed(1) : ''),
+        cuotaDesde: p.cuotaDesde,
+        vaPorCtrl: TextEditingController(
+            text: (p.vaPor > 0 ? p.vaPor : p.cuotaDesde).toString()),
+        mesCtrl: TextEditingController(
+            text: p.mes > 0 ? _mesNumToAbrev(p.mes) : _mesesAbrev[0]),
+      ));
+    }
+
+    if (mounted) setState(() {
+      _prorrogaExpandida = true;
+      _periodosMinimizados = true; // con prórroga activa se ocultan los fijos
+    });
+  }
+
+  /// Guarda (o actualiza) la prórroga junto con sus períodos.
+  Future<void> _guardarProrroga(int contratoId) async {
+    // Si el usuario quitó la prórroga → borrar la activa de la BD
+    if (_prorrogaEliminada) {
+      final activa = await _db.obtenerProrrogaActiva(contratoId);
+      if (activa != null) {
+        await _db.eliminarProrroga(activa['id'] as int);
+      }
+      return;
+    }
+
+    // Solo guardar si el usuario realmente interactuó con la sección:
+    // sección expandida o prórroga existente cargada, y con datos en UI.
+    // Antes la condición exigía _prorrogaExpandida == true, por lo que al
+    // guardar sin tocar prórroga se insertaba una fila vacía con activa=1.
+    if (_prorroga == null && (!_prorrogaExpandida || !_hayDatosProrroga())) {
+      return; // no se tocó nada
+    }
+
+    final fechaInicio = _prorrogaFechaInicioCtrl.text.trim();
+    final fechaFin = _prorrogaFechaFinCtrl.text.trim();
+    final cuotasTotal = int.tryParse(_prorrogaCuotasCtrl.text.trim()) ?? 0;
+    final montoBase =
+        double.tryParse(_prorrogaMontoCtrl.text.trim().replaceAll(',', '.')) ?? 0;
+
+    final esNueva = _prorroga == null;
+    final data = {
+      'contrato_id': contratoId,
+      'fecha_inicio': fechaInicio,
+      'fecha_fin': fechaFin,
+      'cuotas_total': cuotasTotal,
+      'monto_base': montoBase,
+      'activa': 1,
+    };
+
+    final prorrogaId = esNueva
+        ? await _db.insertarProrroga({
+            ...data,
+            // fecha_creacion es NOT NULL en la BD; solo se setea al insertar
+            // para no pisar la fecha de creación original al editar.
+            'fecha_creacion': DateTime.now().toIso8601String(),
+          })
+        : _prorroga!.id!;
+    if (!esNueva) {
+      await _db.actualizarProrroga(prorrogaId, data);
+    }
+    await _db.desactivarProrrogasAnteriores(contratoId, exceptoId: prorrogaId);
+
+    // Períodos: principal + extras
+    final periodos = <Map<String, dynamic>>[];
+    final monto1 =
+        double.tryParse(_prorrogaAlquilerCtrl.text.trim().replaceAll(',', '.')) ?? 0;
+    final hasta1 = int.tryParse(_prorrogaHastaCuotaCtrl.text.trim()) ?? 0;
+    final pct1 =
+        double.tryParse(_prorrogaPorcentajeCtrl.text.trim().replaceAll(',', '.')) ?? 0;
+    final desdeBase = _prorrogaDesdeBase;
+    final vaPor1 = int.tryParse(_prorrogaVaPorCtrl.text.trim()) ?? 0;
+    final mes1 = _mesAbrevToNum(_prorrogaMesCtrl.text.trim());
+    if (monto1 > 0 && hasta1 > 0) {
+      periodos.add({
+        'cuota_desde': desdeBase,
+        'cuota_hasta': hasta1,
+        'monto': monto1,
+        'porcentaje': pct1,
+        'va_por': vaPor1,
+        'mes': mes1,
+      });
+    }
+    for (final r in _prorrogaPeriodosExtra) {
+      final monto =
+          double.tryParse(r.montoCtrl.text.trim().replaceAll(',', '.')) ?? 0;
+      final hasta = int.tryParse(r.hastaCtrl.text.trim()) ?? 0;
+      final pct =
+          double.tryParse(r.porcentajeCtrl.text.trim().replaceAll(',', '.')) ?? 0;
+      if (monto > 0 && hasta > 0) {
+        periodos.add({
+          'cuota_desde': r.cuotaDesde,
+          'cuota_hasta': hasta,
+          'monto': monto,
+          'porcentaje': pct,
+          'va_por': int.tryParse(r.vaPorCtrl.text.trim()) ?? 0,
+          'mes': _mesAbrevToNum(r.mesCtrl.text.trim()),
+        });
+      }
+    }
+    if (periodos.isNotEmpty) {
+      await _db.upsertProrrogaPeriodos(prorrogaId, periodos);
+    }
+  }
+
+  bool _hayDatosProrroga() {
+    return _prorrogaFechaInicioCtrl.text.trim().isNotEmpty ||
+        _prorrogaCuotasCtrl.text.trim().isNotEmpty ||
+        _prorrogaMontoCtrl.text.trim().isNotEmpty;
+  }
+
+  /// Valida los campos obligatorios de la prórroga antes de guardar.
+  /// Devuelve null si todo está correcto o un mensaje de error si falta
+  /// algún campo requerido. Si no hay prórroga a guardar, devuelve null.
+  String? _validarProrroga() {
+    if (_prorrogaEliminada) return null;
+    final hayProrroga = _prorroga != null || _hayDatosProrroga();
+    if (!hayProrroga) return null;
+
+    if (_prorrogaFechaInicioCtrl.text.trim().isEmpty) {
+      return 'Debe completar la fecha de inicio de la prórroga';
+    }
+    if (_prorrogaFechaFinCtrl.text.trim().isEmpty) {
+      return 'Debe completar la fecha de fin de la prórroga';
+    }
+    final cuotas = int.tryParse(_prorrogaCuotasCtrl.text.trim()) ?? 0;
+    if (cuotas <= 0) {
+      return 'Debe indicar la cantidad de cuotas de la prórroga';
+    }
+    final monto1 = double.tryParse(
+            _prorrogaAlquilerCtrl.text.trim().replaceAll(',', '.')) ??
+        0;
+    final hasta1 = int.tryParse(_prorrogaHastaCuotaCtrl.text.trim()) ?? 0;
+    if (monto1 <= 0 || hasta1 <= 0) {
+      return 'Debe completar el monto y las cuotas del primer período de la prórroga';
+    }
+    return null;
+  }
+
+  /// Cuota relativa donde arranca la prórroga. La prórroga siempre
+  /// numera sus propias cuotas desde 1, independiente de los períodos
+  /// fijos del contrato (si hay prórroga, los períodos fijos no importan).
+  int get _prorrogaDesdeBase => 1;
+
+  /// Monto del último período fijo del contrato, para pre-completar la
+  /// prórroga. Si no hay períodos fijos, usa el alquiler del primer período.
+  double _montoUltimoPeriodoFijo() {
+    if (_periodosFijos.isNotEmpty) {
+      return _periodosFijos.last.monto;
+    }
+    return double.tryParse(_alquilerCtrl.text) ?? 0;
+  }
+
+  /// Aviso de validación: las cuotas de la prórroga no deben superar
+  /// el total del contrato + prórroga (si se definió cuotas totales).
+  Widget? _buildValidacionPeriodosProrroga() {
+    final totalContrato = int.tryParse(_cuotasTotalCtrl.text.trim()) ?? 0;
+    final prorrogaCuotas = int.tryParse(_prorrogaCuotasCtrl.text.trim()) ?? 0;
+    final hastaUltimoProrroga = int.tryParse(_prorrogaHastaCuotaCtrl.text.trim()) ?? 0;
+    if (totalContrato > 0 &&
+        prorrogaCuotas > 0 &&
+        hastaUltimoProrroga > 0 &&
+        hastaUltimoProrroga > prorrogaCuotas) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 8),
+        child: Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: const Color(0xFFC62828).withOpacity(0.1),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.error_outline, size: 16, color: Color(0xFFC62828)),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'La prórroga llega hasta la cuota $hastaUltimoProrroga pero '
+                  'solo se definieron $prorrogaCuotas cuotas de prórroga.',
+                  style: const TextStyle(fontSize: 11, color: Color(0xFFC62828)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    return null;
+  }
+
+  /// Sección "Prórroga" en el formulario de contrato.
+  Widget _seccionProrroga() {
+    return _seccionCard(
+      titulo: 'Prórroga',
+      icono: Icons.event_repeat_outlined,
+      color: const Color(0xFF1565C0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (!_prorrogaExpandida) ...[
+            OutlinedButton.icon(
+              onPressed: () => setState(() {
+                _recalcularPeriodos();
+                _prorrogaExpandida = true;
+                _periodosMinimizados = true; // se ocultan los períodos fijos
+                // Pre-completar el monto con el del último período fijo
+                final ultimo = _montoUltimoPeriodoFijo();
+                if (ultimo > 0 && _prorrogaMontoCtrl.text.trim().isEmpty) {
+                  final txt = ultimo.toStringAsFixed(0);
+                  _prorrogaMontoCtrl.text = txt;
+                  if (_prorrogaAlquilerCtrl.text.trim().isEmpty) {
+                    _prorrogaAlquilerCtrl.text = txt;
+                  }
+                }
+              }),
+              icon: const Icon(Icons.add, size: 18),
+              label: const Text('Agregar prórroga',
+                  style: TextStyle(fontSize: 13)),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF1565C0),
+                side: const BorderSide(color: Color(0xFF1565C0)),
+              ),
+            ),
+            if (_prorrogasContrato.length > 1)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'Este contrato tiene ${_prorrogasContrato.length} prórrogas '
+                  'registradas. La última es la activa.',
+                  style: const TextStyle(fontSize: 11, color: Color(0xFF757575)),
+                ),
+              ),
+          ] else ...[
+            Row(
+              children: [
+                Expanded(
+                  child: InkWell(
+                    onTap: () => setState(() {
+                      _prorrogaEliminada = _prorroga != null;
+                      _prorrogaExpandida = false;
+                      _prorroga = null;
+                      _prorrogaFechaInicioCtrl.clear();
+                      _prorrogaFechaFinCtrl.clear();
+                      _prorrogaCuotasCtrl.clear();
+                      _prorrogaMontoCtrl.clear();
+                      _prorrogaAlquilerCtrl.clear();
+                      _prorrogaHastaCuotaCtrl.clear();
+                      _prorrogaPorcentajeCtrl.clear();
+                      _prorrogaVaPorCtrl.text = '1';
+                      _prorrogaMesCtrl.text = _mesesAbrev[0];
+                      for (final r in _prorrogaPeriodosExtra) {
+                        r.montoCtrl.dispose();
+                        r.hastaCtrl.dispose();
+                        r.porcentajeCtrl.dispose();
+                        r.vaPorCtrl.dispose();
+                        r.mesCtrl.dispose();
+                      }
+                      _prorrogaPeriodosExtra = [];
+                    }),
+                    child: Row(
+                      children: [
+                        Icon(Icons.remove_circle_outline,
+                            size: 16, color: const Color(0xFFC62828)),
+                        const SizedBox(width: 4),
+                        const Text('Quitar prórroga',
+                            style: TextStyle(
+                                fontSize: 12, color: Color(0xFFC62828))),
+                      ],
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => setState(() {
+                    _prorrogaTablaMinimizada = !_prorrogaTablaMinimizada;
+                  }),
+                  icon: Icon(_prorrogaTablaMinimizada
+                      ? Icons.keyboard_arrow_down
+                      : Icons.keyboard_arrow_up,
+                      size: 20),
+                  tooltip: _prorrogaTablaMinimizada
+                      ? 'Mostrar períodos de prórroga'
+                      : 'Minimizar períodos de prórroga',
+                ),
+                IconButton(
+                  onPressed: () => setState(() {
+                    // Ocultar = cancelar: si había prórroga cargada, marcarla
+                    // para borrar al guardar; limpiar controllers para que no
+                    // se re-cree una prórroga fantasma con datos residuales.
+                    _prorrogaEliminada = _prorroga != null;
+                    _prorrogaExpandida = false;
+                    _prorroga = null;
+                    _prorrogaFechaInicioCtrl.clear();
+                    _prorrogaFechaFinCtrl.clear();
+                    _prorrogaCuotasCtrl.clear();
+                    _prorrogaMontoCtrl.clear();
+                    _prorrogaAlquilerCtrl.clear();
+                    _prorrogaHastaCuotaCtrl.clear();
+                    _prorrogaPorcentajeCtrl.clear();
+                    for (final r in _prorrogaPeriodosExtra) {
+                      r.montoCtrl.dispose();
+                      r.hastaCtrl.dispose();
+                      r.porcentajeCtrl.dispose();
+                      r.vaPorCtrl.dispose();
+                      r.mesCtrl.dispose();
+                    }
+                    _prorrogaPeriodosExtra = [];
+                  }),
+                  icon: const Icon(Icons.close, size: 20),
+                  tooltip: 'Ocultar',
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            // Datos generales
+            Wrap(
+              spacing: 12,
+              runSpacing: 8,
+              children: [
+                SizedBox(
+                  width: 165,
+                  child: TextField(
+                    controller: _prorrogaFechaInicioCtrl,
+                    readOnly: true,
+                    onTap: _seleccionarProrrogaFechaInicio,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      labelText: 'Fecha inicio *',
+                      prefixIcon: Icon(Icons.calendar_today, size: 16),
+                      border: OutlineInputBorder(),
+                    ),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+                SizedBox(
+                  width: 165,
+                  child: TextField(
+                    controller: _prorrogaFechaFinCtrl,
+                    readOnly: true,
+                    onTap: _seleccionarProrrogaFechaFin,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      labelText: 'Fecha fin *',
+                      prefixIcon: Icon(Icons.calendar_today, size: 16),
+                      border: OutlineInputBorder(),
+                    ),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+                SizedBox(
+                  width: 100,
+                  child: TextField(
+                    controller: _prorrogaCuotasCtrl,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      labelText: 'Cuotas *',
+                      border: OutlineInputBorder(),
+                    ),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+                SizedBox(
+                  width: 110,
+                  child: TextField(
+                    controller: _prorrogaMontoCtrl,
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))
+                    ],
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      labelText: 'Monto base \$',
+                      border: OutlineInputBorder(),
+                    ),
+                    style: const TextStyle(fontSize: 12),
+                    onChanged: (v) {
+                      // Autollenar el "Monto $" de la primera fila con todos
+                      // los dígitos del monto base, en vivo.
+                      if (v.trim().isNotEmpty) {
+                        setState(() => _prorrogaAlquilerCtrl.text = v);
+                      }
+                    },
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            const Divider(height: 1),
+            const SizedBox(height: 8),
+            // Tabla de períodos de prórroga
+            if (!_prorrogaTablaMinimizada) ...[
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const SizedBox(
+                          width: 60,
+                          child: Text('Cuotas',
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF757575)))),
+                      const SizedBox(width: 6),
+                      const SizedBox(
+                          width: 150,
+                          child: Text('Monto \$',
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF757575)))),
+                      const SizedBox(width: 6),
+                      const SizedBox(
+                          width: 80,
+                          child: Text('Hasta mes',
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF757575)))),
+                      const SizedBox(width: 4),
+                      const SizedBox(
+                          width: 75,
+                          child: Text('% Aumento',
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF757575)))),
+                      const SizedBox(width: 4),
+                      const SizedBox(
+                          width: 50,
+                          child: Text('Va por',
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF757575)))),
+                      const SizedBox(width: 4),
+                      const SizedBox(
+                          width: 65,
+                          child: Text('Mes',
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF757575)))),
+                    ],
+                  ),
+                  const Divider(height: 1),
+                  // Período 1 (principal)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 60,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFF1565C0).withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: const Text('1 -',
+                                style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.bold,
+                                    color: Color(0xFF1565C0))),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        SizedBox(
+                          width: 150,
+                          child: TextField(
+                            controller: _prorrogaAlquilerCtrl,
+                            keyboardType: const TextInputType
+                                .numberWithOptions(decimal: true),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.allow(
+                                  RegExp(r'^\d*\.?\d*'))
+                            ],
+                            decoration: const InputDecoration(
+                              isDense: true,
+                              hintText: '50000',
+                              contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 8),
+                              border: OutlineInputBorder(),
+                            ),
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        SizedBox(
+                          width: 80,
+                          child: TextField(
+                            controller: _prorrogaHastaCuotaCtrl,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly
+                            ],
+                            decoration: const InputDecoration(
+                              isDense: true,
+                              hintText: '12',
+                              contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 8),
+                              border: OutlineInputBorder(),
+                            ),
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        SizedBox(
+                          width: 75,
+                          child: TextField(
+                            controller: _prorrogaPorcentajeCtrl,
+                            keyboardType: const TextInputType
+                                .numberWithOptions(decimal: true),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.allow(
+                                  RegExp(r'^\d*\.?\d*'))
+                            ],
+                            decoration: const InputDecoration(
+                              isDense: true,
+                              hintText: '%',
+                              contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 8),
+                              border: OutlineInputBorder(),
+                              suffixText: '%',
+                              suffixStyle: TextStyle(fontSize: 11),
+                            ),
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        SizedBox(
+                          width: 50,
+                          child: TextField(
+                            controller: _prorrogaVaPorCtrl,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly
+                            ],
+                            decoration: const InputDecoration(
+                              isDense: true,
+                              contentPadding: EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 8),
+                              border: OutlineInputBorder(),
+                            ),
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        SizedBox(
+                          width: 70,
+                          child: _buildMesDropdownPrrorroga(_prorrogaMesCtrl),
+                        ),
+                      ],
+                    ),
+                  ),
+                  // Filas extra
+                  ..._buildExtraProrrogaPeriodos(),
+                ],
+              ),
+            ),
+            _buildValidacionPeriodosProrroga() ?? const SizedBox.shrink(),
+            const SizedBox(height: 8),
+            TextButton.icon(
+              onPressed: _agregarProrrogaPeriodoManual,
+              icon: const Icon(Icons.add, size: 16),
+              label: const Text('Agregar período a la prórroga',
+                  style: TextStyle(fontSize: 12)),
+              style: TextButton.styleFrom(
+                foregroundColor: const Color(0xFF1565C0),
+              ),
+            ),
+            ],
+          ],
+        ],
+      ),
+    );
+  }
+
+  /// Muestra el selector de fecha para el inicio de la prórroga.
+  Future<void> _seleccionarProrrogaFechaInicio() async {
+    final ahora = DateTime.now();
+    final inicial = _prorrogaFechaInicioCtrl.text.isEmpty
+        ? DateTime(ahora.year, ahora.month + 1)
+        : DateTime.tryParse(_prorrogaFechaInicioCtrl.text) ?? ahora;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: inicial,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (picked != null) {
+      setState(() {
+        _prorrogaFechaInicioCtrl.text =
+            DateFormat('yyyy-MM-dd').format(picked);
+        if (_prorrogaFechaFinCtrl.text.isEmpty) {
+          _prorrogaFechaFinCtrl.text =
+              DateFormat('yyyy-MM-dd').format(picked);
+        }
+      });
+    }
+  }
+
+  /// Muestra el selector de fecha para el fin de la prórroga.
+  Future<void> _seleccionarProrrogaFechaFin() async {
+    final ahora = DateTime.now();
+    final inicial = _prorrogaFechaFinCtrl.text.isEmpty
+        ? DateTime(ahora.year, ahora.month + 12)
+        : DateTime.tryParse(_prorrogaFechaFinCtrl.text) ?? ahora;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: inicial,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (picked != null) {
+      setState(() {
+        _prorrogaFechaFinCtrl.text =
+            DateFormat('yyyy-MM-dd').format(picked);
+      });
+    }
+  }
+
+  /// Agrega una fila manual de período de prórroga.
+  void _agregarProrrogaPeriodoManual() {
+    // Último "hasta" entre el período principal y las filas extra
+    var hastaUltimo = int.tryParse(_prorrogaHastaCuotaCtrl.text.trim()) ?? 0;
+    for (final r in _prorrogaPeriodosExtra) {
+      final h = int.tryParse(r.hastaCtrl.text.trim()) ?? 0;
+      if (h > hastaUltimo) hastaUltimo = h;
+    }
+    final desde = hastaUltimo > 0 ? hastaUltimo + 1 : _prorrogaDesdeBase;
+    final mesIdx = desde % 12 == 0 ? 11 : (desde % 12) - 1;
+    setState(() {
+      _prorrogaPeriodosExtra.add(_ProrrogaPeriodoRow(
+        montoCtrl: TextEditingController(
+            text: _prorrogaAlquilerCtrl.text.trim()),
+        hastaCtrl: TextEditingController(
+            text: hastaUltimo > 0 ? '${hastaUltimo + 12}' : '12'),
+        porcentajeCtrl: TextEditingController(
+            text: _prorrogaPorcentajeCtrl.text.trim()),
+        cuotaDesde: desde,
+        vaPorCtrl: TextEditingController(text: '$desde'),
+        mesCtrl: TextEditingController(text: _mesesAbrev[mesIdx]),
+      ));
+    });
+  }
+
+  /// Elimina una fila extra de período de prórroga.
+  void _eliminarProrrogaPeriodoExtra(int index) {
+    setState(() {
+      final r = _prorrogaPeriodosExtra[index];
+      r.montoCtrl.dispose();
+      r.hastaCtrl.dispose();
+      r.porcentajeCtrl.dispose();
+      r.vaPorCtrl.dispose();
+      r.mesCtrl.dispose();
+      _prorrogaPeriodosExtra.removeAt(index);
+    });
+  }
+
+  /// Construye las filas extra de períodos de prórroga.
+  List<Widget> _buildExtraProrrogaPeriodos() {
+    return _prorrogaPeriodosExtra.asMap().entries.map((entry) {
+      final i = entry.key;
+      final row = entry.value;
+      return Column(
+        children: [
+          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 6, 4, 6),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 60,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 6, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF1565C0).withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text('${row.cuotaDesde} -',
+                        style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Color(0xFF1565C0))),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                SizedBox(
+                  width: 150,
+                  child: TextField(
+                    controller: row.montoCtrl,
+                    keyboardType: const TextInputType
+                        .numberWithOptions(decimal: true),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(
+                          RegExp(r'^\d*\.?\d*'))
+                    ],
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 8),
+                      border: OutlineInputBorder(),
+                    ),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                SizedBox(
+                  width: 80,
+                  child: TextField(
+                    controller: row.hastaCtrl,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly
+                    ],
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 8),
+                      border: OutlineInputBorder(),
+                    ),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                SizedBox(
+                  width: 75,
+                  child: TextField(
+                    controller: row.porcentajeCtrl,
+                    keyboardType: const TextInputType
+                        .numberWithOptions(decimal: true),
+                    inputFormatters: [
+                      FilteringTextInputFormatter.allow(
+                          RegExp(r'^\d*\.?\d*'))
+                    ],
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 8),
+                      border: OutlineInputBorder(),
+                      suffixText: '%',
+                      suffixStyle: TextStyle(fontSize: 11),
+                    ),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                SizedBox(
+                  width: 50,
+                  child: TextField(
+                    controller: row.vaPorCtrl,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly
+                    ],
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 8),
+                      border: OutlineInputBorder(),
+                    ),
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+                const SizedBox(width: 4),
+                SizedBox(
+                  width: 70,
+                  child: _buildMesDropdownPrrorroga(row.mesCtrl),
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  onPressed: () => _eliminarProrrogaPeriodoExtra(i),
+                  icon: const Icon(Icons.close,
+                      size: 16, color: Color(0xFFC62828)),
+                  tooltip: 'Eliminar período',
+                  visualDensity: VisualDensity.compact,
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }).toList();
+  }
+
   // ── Sección Recargos ──────────────────────────────────────
 
   Widget _seccionRecargos() {
@@ -1709,6 +2652,9 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
     required String titulo,
     required IconData icono,
     required Widget child,
+    Color color = _magenta,
+    bool collapsed = false,
+    VoidCallback? onToggle,
   }) {
     return Card(
       elevation: 2,
@@ -1719,22 +2665,39 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
           children: [
             Row(
               children: [
-                Icon(icono, size: 18, color: _magenta),
+                Icon(icono, size: 18, color: color),
                 const SizedBox(width: 8),
-                Text(
-                  titulo,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: _magenta,
+                Expanded(
+                  child: Text(
+                    titulo,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: color,
+                    ),
                   ),
                 ),
+                if (onToggle != null)
+                  IconButton(
+                    onPressed: onToggle,
+                    icon: Icon(
+                      collapsed
+                          ? Icons.keyboard_arrow_down
+                          : Icons.keyboard_arrow_up,
+                      size: 20,
+                      color: const Color(0xFF9E9E9E),
+                    ),
+                    tooltip: collapsed ? 'Expandir' : 'Minimizar',
+                    visualDensity: VisualDensity.compact,
+                  ),
               ],
             ),
-            const SizedBox(height: 12),
-            const Divider(height: 1),
-            const SizedBox(height: 12),
-            child,
+            if (!collapsed) ...[
+              const SizedBox(height: 12),
+              const Divider(height: 1),
+              const SizedBox(height: 12),
+              child,
+            ],
           ],
         ),
       ),
@@ -2448,6 +3411,25 @@ class _PeriodoRow {
     required this.montoCtrl,
     required this.hastaCtrl,
     required this.porcentajeCtrl,
+    required this.cuotaDesde,
+  });
+}
+
+/// Estructura para cada fila extra de período de prórroga
+class _ProrrogaPeriodoRow {
+  final TextEditingController montoCtrl;
+  final TextEditingController hastaCtrl;
+  final TextEditingController porcentajeCtrl;
+  final TextEditingController vaPorCtrl;
+  final TextEditingController mesCtrl;
+  int cuotaDesde;
+
+  _ProrrogaPeriodoRow({
+    required this.montoCtrl,
+    required this.hastaCtrl,
+    required this.porcentajeCtrl,
+    required this.vaPorCtrl,
+    required this.mesCtrl,
     required this.cuotaDesde,
   });
 }

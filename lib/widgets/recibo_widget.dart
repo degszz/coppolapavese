@@ -12,6 +12,11 @@ String _normalizarDescripcionAlquiler(
   return 'Alquiler Cuota N°$numeroCuota';
 }
 
+const _mesesCompletosRecibo = [
+  '', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio',
+  'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre',
+];
+
 /// Vista previa del recibo en pantalla — formato ORIGINAL + COPIA en una hoja.
 class ReciboWidget extends StatelessWidget {
   final ReciboModel recibo;
@@ -412,8 +417,19 @@ class ReciboWidget extends StatelessWidget {
     final fs  = small ? 9.5 : 11.0;
     final fsH = small ? 9.0 : 10.0;
 
+    // Fecha de la cuota: usar la persistida o, si no hay (recibos viejos),
+    // derivarla del mes/año de fecha_emision del recibo.
+    String? fechaFallback;
+    final feStr = recibo.fechaEmision;
+    if (feStr.isNotEmpty) {
+      try {
+        final fe = DateTime.parse(feStr);
+        fechaFallback = '${_mesesCompletosRecibo[fe.month]} ${fe.year}';
+      } catch (_) {}
+    }
     final tieneFecha = recibo.servicios.any(
-        (s) => s.fechaCuota != null && s.fechaCuota!.isNotEmpty);
+            (s) => s.fechaCuota != null && s.fechaCuota!.isNotEmpty) ||
+        fechaFallback != null;
     final tieneVence = recibo.servicios.any(
         (s) => s.fechaVence != null && s.fechaVence!.isNotEmpty);
     final fmtVence = DateFormat('dd/MM');
@@ -427,6 +443,9 @@ class ReciboWidget extends StatelessWidget {
           firstFechaIdx = i;
           break;
         }
+      }
+      if (firstFechaIdx == null && fechaFallback != null) {
+        firstFechaIdx = 0;
       }
     }
 
@@ -461,12 +480,15 @@ class ReciboWidget extends StatelessWidget {
           if (s.fechaVence != null && s.fechaVence!.isNotEmpty) {
             try { venceStr = fmtVence.format(DateTime.parse(s.fechaVence!)); } catch (_) {}
           }
-          final totalFila = s.monto + s.punitorios;
+          // Si el concepto es "Descontar al pago", se muestra en negativo
+          final totalFila = s.efectoInquilino == 'descontar'
+              ? -(s.monto + s.punitorios)
+              : s.monto + s.punitorios;
           return TableRow(
             decoration: const BoxDecoration(color: Colors.white),
             children: [
               if (tieneFecha)
-                _td(idx == firstFechaIdx ? (s.fechaCuota ?? '') : '', fs: fs),
+                _td(idx == firstFechaIdx ? ((s.fechaCuota ?? fechaFallback) ?? '') : '', fs: fs),
               if (tieneVence)
                 _td(venceStr, fs: fs, center: true),
               _td(_normalizarDescripcionAlquiler(
