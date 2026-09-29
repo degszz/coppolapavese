@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 # reparar-red.ps1 — PC HOST (192.168.100.30)
 # Re-aplica la configuración de red que Windows suele "olvidar"
 # tras reinicios: perfil Privado, firewall SMB, servicios,

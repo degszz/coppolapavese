@@ -31,6 +31,11 @@ class DatabaseHelper {
       version: 15, // v15: efecto_inquilino en servicios_recibo (descontar al pago)
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
+      // Tolerancia a downgrade: si la BD fue migrada por una app más nueva
+      // (ej: la otra PC actualizó primero), no crashear. Las migraciones del
+      // proyecto son SIEMPRE aditivas (solo agregan columnas con defaults),
+      // así que una app vieja puede operar sobre una BD más nueva sin error.
+      onDowngrade: (db, oldVersion, newVersion) async {},
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
         // Acceso concurrente: DELETE journal es más seguro en carpetas de red

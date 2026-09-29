@@ -1,5 +1,5 @@
-name: coppolapavese
-description: "Aplicación de gestión inmobiliaria para recibos de alquiler."
+﻿name: coppolapavese
+description: "AplicaciÃ³n de gestiÃ³n inmobiliaria para recibos de alquiler."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+1
+version: 1.0.1+2
 
 environment:
   sdk: ^3.11.0
@@ -33,7 +33,7 @@ dependencies:
   flutter_localizations:
     sdk: flutter
 
-  # Íconos de Cupertino (iOS)
+  # Ãconos de Cupertino (iOS)
   cupertino_icons: ^1.0.8
 
   # Base de datos local
@@ -41,11 +41,11 @@ dependencies:
   sqflite_common_ffi: ^2.3.4+4
   path: ^1.9.0
 
-  # Generación de PDF
+  # GeneraciÃ³n de PDF
   pdf: ^3.11.1
   printing: ^5.13.1
 
-  # Exportación Excel
+  # ExportaciÃ³n Excel
   excel: ^4.0.6
   archive: ^3.6.1
   xml: ^6.5.0
@@ -53,7 +53,7 @@ dependencies:
   # Sistema de archivos
   path_provider: ^2.1.4
 
-  # Internacionalización y formateo
+  # InternacionalizaciÃ³n y formateo
   intl: ^0.20.2
 
   # Compartir archivos
@@ -65,7 +65,7 @@ dependencies:
   # Permisos (Android/iOS)
   permission_handler: ^13.0.1
 
-  # Íconos adicionales
+  # Ãconos adicionales
   flutter_launcher_icons: ^0.14.1
   url_launcher: ^6.3.2
 

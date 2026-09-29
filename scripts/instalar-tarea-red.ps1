@@ -1,4 +1,4 @@
-# ============================================================
+﻿# ============================================================
 # instalar-tarea-red.ps1 — PC HOST (correr UNA VEZ como admin)
 # Instala la tarea programada que re-aplica la config de red:
 #   - al iniciar sesión (cualquier usuario)
