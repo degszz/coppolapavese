@@ -177,7 +177,14 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
         final h = f['cuota_hasta'] as int? ?? 0;
         if (h > ultimaFija) ultimaFija = h;
       }
-      if (numeroCuota > ultimaFija) {
+      // Ancla: cuota GLOBAL en la que arranca la prórroga (se guarda al
+      // crearla; en las viejas se infiere del último recibo previo + 1).
+      // Si hay ancla, la prórroga TIENE PRIORIDAD sobre el período fijo
+      // desde esa cuota (aunque el rango fijo todavía la "alcance").
+      final iniG =
+          (prorrogas.first['prorroga_inicio_global'] as num?)?.toInt() ?? 0;
+      final inicioProrroga = iniG > 0 ? iniG : ultimaFija + 1;
+      if (numeroCuota >= inicioProrroga) {
         // va_por del primer período de la prórroga (base de la numeración)
         prorrogas.sort((a, b) =>
             (a['cuota_desde'] as int).compareTo(b['cuota_desde'] as int));
@@ -185,7 +192,7 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
         final vaPorBase = (primero['va_por'] as num?)?.toInt() ?? 0;
         final desdeBase = primero['cuota_desde'] as int? ?? 1;
         final base = vaPorBase > 0 ? vaPorBase : desdeBase;
-        final cuotaProrroga = numeroCuota - ultimaFija - 1 + base;
+        final cuotaProrroga = numeroCuota - inicioProrroga + base;
 
         // Período de la prórroga que contiene esta cuota relativa
         Map<String, dynamic>? periodoProrroga;

@@ -28,7 +28,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       dbPath,
-      version: 15, // v15: efecto_inquilino en servicios_recibo (descontar al pago)
+      version: 16, // v16: prorrogas.cuota_inicio_global (ancla del conteo)
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
       // Tolerancia a downgrade: si la BD fue migrada por una app más nueva
@@ -159,6 +159,8 @@ class DatabaseHelper {
     await _migrarV14(db);
     // v15 (efecto_inquilino en servicios_recibo)
     await _migrarV15(db);
+    // v16 (cuota_inicio_global en prorrogas)
+    await _migrarV16(db);
   }
 
   // ════════════════════════════════════════════════════════════════
@@ -207,6 +209,9 @@ class DatabaseHelper {
     }
     if (oldVersion < 15) {
       await _migrarV15(db);
+    }
+    if (oldVersion < 16) {
+      await _migrarV16(db);
     }
   }
 
@@ -407,6 +412,22 @@ class DatabaseHelper {
     try {
       await db.execute(
         "ALTER TABLE servicios_recibo ADD COLUMN efecto_inquilino TEXT NOT NULL DEFAULT 'sin_efecto'",
+      );
+    } catch (_) {
+      // columna ya existe
+    }
+  }
+
+  // v16: cuota_inicio_global en prorrogas = cuota GLOBAL del contrato en la
+  // que arranca la prórroga (el "Va por" del contrato al crearla). Permite
+  // que la prórroga tenga prioridad sobre el período fijo aunque su rango
+  // "global" todavía alcance (ej: vence el período en 30 pero la prórroga
+  // se agregó cuando el contrato iba por la 30 → esa cuota ya es prórroga).
+  // NULL para prórrogas viejas → se infiere en runtime.
+  Future<void> _migrarV16(Database db) async {
+    try {
+      await db.execute(
+        'ALTER TABLE prorrogas ADD COLUMN cuota_inicio_global INTEGER',
       );
     } catch (_) {
       // columna ya existe
@@ -2007,19 +2028,25 @@ class DatabaseHelper {
       if (prorrogas.isNotEmpty) {
         // Las cuotas de prórroga son RELATIVAS a la prórroga (1..N); la
         // cuota recibida es GLOBAL (sigue a los períodos fijos).
+        // Prioridad de prórroga: si hay ancla (cuota_inicio_global), la
+        // prórroga gobierna desde esa cuota aunque el período fijo la
+        // alcance.
         var ultimaFija = 0;
         for (final f in fijos) {
           final h = f['cuota_hasta'] as int? ?? 0;
           if (h > ultimaFija) ultimaFija = h;
         }
-        if (numeroCuota > ultimaFija) {
+        final iniG =
+            (prorrogas.first['prorroga_inicio_global'] as num?)?.toInt() ?? 0;
+        final inicioProrroga = iniG > 0 ? iniG : ultimaFija + 1;
+        if (numeroCuota >= inicioProrroga) {
           prorrogas.sort((a, b) =>
               (a['cuota_desde'] as int).compareTo(b['cuota_desde'] as int));
           final primero = prorrogas.first;
           final vaPorBase = (primero['va_por'] as num?)?.toInt() ?? 0;
           final desdeBase = primero['cuota_desde'] as int? ?? 1;
           final base = vaPorBase > 0 ? vaPorBase : desdeBase;
-          final cuotaRel = numeroCuota - ultimaFija - 1 + base;
+          final cuotaRel = numeroCuota - inicioProrroga + base;
           for (final p in prorrogas) {
             final desde = p['cuota_desde'] as int? ?? 0;
             final hasta = p['cuota_hasta'] as int? ?? 0;
@@ -2149,7 +2176,10 @@ class DatabaseHelper {
       orderBy: 'cuota_desde ASC',
     );
 
-    // Períodos de prórroga (solo prórroga activa)
+    // Períodos de prórroga (solo prórroga activa), incluyendo el ancla
+    // cuota_inicio_global (cuota global del contrato en la que arranca la
+    // prórroga). V16+: viene de la columna; para prórrogas viejas (NULL)
+    // se infiere como (último recibo emitido ANTES de crearla) + 1.
     final prorrogaPeriodos = await db.rawQuery('''
       SELECT
         pp.cuota_desde,
@@ -2158,15 +2188,45 @@ class DatabaseHelper {
         pp.porcentaje,
         pp.va_por,
         pp.mes,
-        p.id as prorroga_id
+        p.id as prorroga_id,
+        p.cuota_inicio_global as prorroga_inicio_global,
+        p.fecha_creacion as prorroga_fecha_creacion
       FROM prorroga_periodos pp
       JOIN prorrogas p ON pp.prorroga_id = p.id
       WHERE p.contrato_id = ? AND p.activa = 1
       ORDER BY pp.cuota_desde ASC
     ''', [contratoId]);
 
+    var prorrogaRows = prorrogaPeriodos;
+    if (prorrogaPeriodos.isNotEmpty) {
+      var inicioGlobal =
+          (prorrogaPeriodos.first['prorroga_inicio_global'] as num?)
+                  ?.toInt() ??
+              0;
+      if (inicioGlobal <= 0) {
+        // Fallback para prórrogas viejas sin ancla: la prórroga arranca en
+        // la cuota siguiente al último recibo emitido antes de crearse.
+        final fc = prorrogaPeriodos.first['prorroga_fecha_creacion']
+                as String? ??
+            '';
+        if (fc.isNotEmpty) {
+          final ultAntes = await db.rawQuery(
+            'SELECT COALESCE(MAX(numero_cuota), 0) AS m FROM recibos '
+            "WHERE contrato_id = ? AND COALESCE(created_at, fecha_emision, '') <= ?",
+            [contratoId, fc],
+          );
+          inicioGlobal = ((ultAntes.first['m'] as num?)?.toInt() ?? 0) + 1;
+        }
+      }
+      if (inicioGlobal > 0) {
+        prorrogaRows = prorrogaPeriodos
+            .map((p) => {...p, 'prorroga_inicio_global': inicioGlobal})
+            .toList();
+      }
+    }
+
     // Combinar y ordenar por cuota_desde
-    final todos = [...periodosFijos, ...prorrogaPeriodos];
+    final todos = [...periodosFijos, ...prorrogaRows];
     todos.sort((a, b) => (a['cuota_desde'] as int).compareTo(b['cuota_desde'] as int));
 
     return todos;

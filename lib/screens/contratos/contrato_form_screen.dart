@@ -1662,6 +1662,11 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
             // fecha_creacion es NOT NULL en la BD; solo se setea al insertar
             // para no pisar la fecha de creación original al editar.
             'fecha_creacion': DateTime.now().toIso8601String(),
+            // Ancla: cuota GLOBAL del contrato en la que arranca la
+            // prórroga (el "Va por" actual). Solo al crearla — en ediciones
+            // posteriores no se pisa para no mover la numeración.
+            'cuota_inicio_global':
+                int.tryParse(_cuotaInicialCtrl.text.trim()) ?? 0,
           })
         : _prorroga!.id!;
     if (!esNueva) {
