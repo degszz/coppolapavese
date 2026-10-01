@@ -504,8 +504,11 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
 
   // ── Confirmar e Imprimir ──────────────────────────────────────
   Future<void> _confirmarEImprimir() async {
+    // Validar el form PRIMERO: marca en rojo (debajo del campo) lo que
+    // falte — dropdown de contrato incluido — y después avisamos.
+    final formOk = _formKey.currentState?.validate() ?? false;
     if (_contratoSel == null && _reciboEditando == null) {
-      _mostrarError('Seleccioná un contrato antes de continuar.');
+      _mostrarError('Seleccioná un contrato antes de continuar (campo marcado en rojo).');
       return;
     }
     if (_servicios.isEmpty || _servicios.every((s) => s.descripcion.isEmpty)) {
@@ -513,7 +516,10 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
           'Agregá al menos un servicio con descripción antes de confirmar.');
       return;
     }
-    if (!_formKey.currentState!.validate()) return;
+    if (!formOk) {
+      _mostrarError('Corrija los campos marcados en rojo antes de continuar.');
+      return;
+    }
 
     setState(() => _guardando = true);
     ReciboModel? recibo;

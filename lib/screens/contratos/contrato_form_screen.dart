@@ -8,6 +8,7 @@ import '../../models/inquilino_model.dart';
 import '../../models/periodo_fijo_model.dart';
 import '../../models/prorroga_model.dart';
 import '../../utils/snackbar_helper.dart';
+import '../../utils/validacion_campos.dart';
 
 // ════════════════════════════════════════════════════════════
 // MAIN SCREEN
@@ -104,6 +105,16 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
   bool _periodosMinimizados = false;
   bool _prorrogaTablaMinimizada = false;
   bool _prorrogaEliminada = false;
+  /// true si la prórroga cargada tiene datos inconsistentes de versiones
+  /// viejas (rango invertido desde>hasta, fechas vacías, etc.). Solo se
+  /// usa para mostrar el banner de aviso; no bloquea nada.
+  bool _prorrogaInconsistente = false;
+
+  /// Errores de validación por campo (borde rojo + mensaje debajo).
+  /// Keys usadas: 'pr_fecha_inicio', 'pr_fecha_fin', 'pr_cuotas',
+  /// 'pr_monto', 'pr_p1_monto', 'pr_p1_hasta', 'pr_x{i}_monto',
+  /// 'pr_x{i}_hasta', 'sel_propiedad', 'sel_inquilino', 'sel_propietario'.
+  final _errores = ErroresCampos();
   final _prorrogaFechaInicioCtrl = TextEditingController();
   final _prorrogaFechaFinCtrl = TextEditingController();
   final _prorrogaCuotasCtrl = TextEditingController();
@@ -118,6 +129,16 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
   @override
   void initState() {
     super.initState();
+    // Limpiar el error de cada campo de prórroga en cuanto el usuario
+    // escribe o elige una fecha en él.
+    void limpiarAlEditar() {
+      if (mounted) setState(() {});
+    }
+    _errores.vincular(_prorrogaFechaInicioCtrl, 'pr_fecha_inicio', refrescar: limpiarAlEditar);
+    _errores.vincular(_prorrogaFechaFinCtrl, 'pr_fecha_fin', refrescar: limpiarAlEditar);
+    _errores.vincular(_prorrogaCuotasCtrl, 'pr_cuotas', refrescar: limpiarAlEditar);
+    _errores.vincular(_prorrogaMontoCtrl, 'pr_monto', refrescar: limpiarAlEditar);
+    _errores.vincular(_prorrogaHastaCuotaCtrl, 'pr_p1_hasta', refrescar: limpiarAlEditar);
     _cargarDatos();
   }
 
@@ -364,28 +385,38 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
   }
 
   Future<void> _guardar() async {
-    if (_propiedadSel == null && _inquilinoSel == null) {
-      mostrarNotificacion(context,
-          texto: 'Debe seleccionar al menos una propiedad o un inquilino',
-          color: const Color(0xFFC62828));
-      return;
-    }
-
     final propietarioId = _propietarioManualId
         ?? _propiedadSel?.propietarioId
         ?? _inquilinoSel?.propietarioId;
 
-    if (propietarioId == null) {
-      mostrarNotificacion(context,
-          texto: 'Seleccione un propietario para el contrato',
-          color: const Color(0xFFC62828));
-      return;
-    }
+    // Marcar errores en rojo al lado de los campos correspondientes
+    setState(() {
+      _errores.limpiarPrefijo('sel_');
+      if (_propiedadSel == null && _inquilinoSel == null) {
+        _errores['sel_propiedad'] =
+            'Debe seleccionar al menos una propiedad o un inquilino';
+      }
+      if (propietarioId == null) {
+        _errores['sel_propietario'] =
+            'Seleccione un propietario para el contrato';
+      }
+    });
 
-    final errorProrroga = _validarProrroga();
-    if (errorProrroga != null) {
+    // Validación de la prórroga: marca campos en rojo y bloquea si falta algo
+    final prorrogaOk = _validarProrrogaInline();
+
+    if (!_errores.vacio || !prorrogaOk) {
+      setState(() {
+        // Si hay errores de prórroga, abrir la sección para que se vean
+        if (_errores.hayConPrefijo('pr_p1_') || _errores.hayConPrefijo('pr_x')) {
+          _prorrogaTablaMinimizada = false;
+        }
+        if (_errores.hayConPrefijo('pr_')) _prorrogaExpandida = true;
+      });
       mostrarNotificacion(context,
-          texto: errorProrroga, color: const Color(0xFFC62828));
+          texto: 'Corrija los campos marcados en rojo antes de guardar:\n' +
+              _errores.mensajes.join('\n'),
+          color: const Color(0xFFC62828));
       return;
     }
 
@@ -831,6 +862,18 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
     );
   }
 
+  /// Mensaje de error en rojo bajo selectores (propiedad/inquilino/etc).
+  /// Devuelve SizedBox.shrink() cuando no hay error en esa key.
+  Widget _textoErrorSel(String key) {
+    final e = _errores[key];
+    if (e == null) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Text(e,
+          style: const TextStyle(fontSize: 11, color: Color(0xFFC62828))),
+    );
+  }
+
   // ── Sección Propiedad ─────────────────────────────────────
 
   Widget _seccionPropiedad() {
@@ -857,7 +900,10 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                   isExpanded: true,
                   value: _propiedadSel,
                   hint: const Text('O Elegir...'),
-                  onChanged: (v) => setState(() => _propiedadSel = v),
+                  onChanged: (v) => setState(() {
+                    _propiedadSel = v;
+                    if (v != null) _errores.remover('sel_propiedad');
+                  }),
                   items: [
                     const DropdownMenuItem<PropiedadModel?>(
                       value: null,
@@ -885,8 +931,10 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                   fontSize: 11, color: Color(0xFF1565C0)),
             ),
           ],
+          _textoErrorSel('sel_propiedad'),
           const SizedBox(height: 10),
           _filaPropietario(),
+          _textoErrorSel('sel_propietario'),
         ],
       ),
     );
@@ -998,7 +1046,10 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                   isExpanded: true,
                   value: _inquilinoSel,
                   hint: const Text('O Elegir...'),
-                  onChanged: (v) => setState(() => _inquilinoSel = v),
+                  onChanged: (v) => setState(() {
+                    _inquilinoSel = v;
+                    if (v != null) _errores.remover('sel_propiedad');
+                  }),
                   items: [
                     const DropdownMenuItem<InquilinoModel?>(
                       value: null,
@@ -1026,6 +1077,7 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                   fontSize: 11, color: Color(0xFF1565C0)),
             ),
           ],
+          _textoErrorSel('sel_propiedad'),
         ],
       ),
     );
@@ -1533,9 +1585,39 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
       ));
     }
 
+    // Detectar datos inconsistentes dejados por versiones viejas:
+    // fechas vacías, cuotas 0, o períodos con rango invertido (desde>hasta).
+    final p = _prorroga!;
+    _prorrogaInconsistente =
+        p.fechaInicio.isEmpty ||
+        p.fechaFin.isEmpty ||
+        p.cuotasTotal <= 0 ||
+        p.periodos.any((per) => per.cuotaDesde > per.cuotaHasta);
+
     if (mounted) setState(() {
       _prorrogaExpandida = true;
       _periodosMinimizados = true; // con prórroga activa se ocultan los fijos
+      if (_prorrogaInconsistente) {
+        _prorrogaTablaMinimizada = false; // que se vea el problema
+        // Pre-marcar en rojo los campos afectados para facilitar el arreglo
+        if (_prorrogaFechaInicioCtrl.text.trim().isEmpty) {
+          _errores['pr_fecha_inicio'] = 'Falta (dato perdido de versión anterior)';
+        }
+        if (_prorrogaFechaFinCtrl.text.trim().isEmpty) {
+          _errores['pr_fecha_fin'] = 'Falta (dato perdido de versión anterior)';
+        }
+        if (p.cuotasTotal <= 0) {
+          _errores['pr_cuotas'] = 'Falta (dato perdido de versión anterior)';
+        }
+        for (int i = 0; i < p.periodos.length; i++) {
+          final per = p.periodos[i];
+          if (per.cuotaDesde > per.cuotaHasta) {
+            final key = i == 0 ? 'pr_p1_hasta' : 'pr_x${i - 1}_hasta';
+            _errores[key] =
+                'Rango invertido: arranca en ${per.cuotaDesde} pero llega hasta ${per.cuotaHasta}';
+          }
+        }
+      }
     });
   }
 
@@ -1624,9 +1706,10 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
         });
       }
     }
-    if (periodos.isNotEmpty) {
-      await _db.upsertProrrogaPeriodos(prorrogaId, periodos);
-    }
+    // Siempre (aunque la lista venga vacía): el delete-all es válido y
+    // evita que queden períodos viejos colgados si la validación futura
+    // dejara pasar una prórroga sin períodos.
+    await _db.upsertProrrogaPeriodos(prorrogaId, periodos);
   }
 
   bool _hayDatosProrroga() {
@@ -1635,32 +1718,90 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
         _prorrogaMontoCtrl.text.trim().isNotEmpty;
   }
 
-  /// Valida los campos obligatorios de la prórroga antes de guardar.
-  /// Devuelve null si todo está correcto o un mensaje de error si falta
-  /// algún campo requerido. Si no hay prórroga a guardar, devuelve null.
-  String? _validarProrroga() {
-    if (_prorrogaEliminada) return null;
-    final hayProrroga = _prorroga != null || _hayDatosProrroga();
-    if (!hayProrroga) return null;
+  /// Valida los campos de la prórroga antes de guardar, marcando en ROJO
+  /// cada campo incompleto/inválido (mensaje debajo del campo) y
+  /// devolviendo false si hay que bloquear el guardado.
+  /// Si no hay prórroga a guardar, devuelve true sin marcar nada.
+  bool _validarProrrogaInline() {
+    // Limpiar solo los errores de la sección prórroga (keys 'pr_')
+    _errores.limpiarPrefijo('pr_');
 
-    if (_prorrogaFechaInicioCtrl.text.trim().isEmpty) {
-      return 'Debe completar la fecha de inicio de la prórroga';
+    if (_prorrogaEliminada) return true;
+    final hayProrroga = _prorroga != null || _hayDatosProrroga();
+    if (!hayProrroga) return true;
+
+    // ── Datos generales ──
+    final fIniTxt = _prorrogaFechaInicioCtrl.text.trim();
+    final fFinTxt = _prorrogaFechaFinCtrl.text.trim();
+    if (fIniTxt.isEmpty) {
+      _errores['pr_fecha_inicio'] = 'Obligatorio: fecha de inicio';
     }
-    if (_prorrogaFechaFinCtrl.text.trim().isEmpty) {
-      return 'Debe completar la fecha de fin de la prórroga';
+    if (fFinTxt.isEmpty) {
+      _errores['pr_fecha_fin'] = 'Obligatorio: fecha de fin';
     }
+    final fIni = DateTime.tryParse(fIniTxt);
+    final fFin = DateTime.tryParse(fFinTxt);
+    if (fIni != null && fFin != null && fFin.isBefore(fIni)) {
+      _errores['pr_fecha_fin'] = 'La fecha fin no puede ser anterior al inicio';
+    }
+
     final cuotas = int.tryParse(_prorrogaCuotasCtrl.text.trim()) ?? 0;
     if (cuotas <= 0) {
-      return 'Debe indicar la cantidad de cuotas de la prórroga';
+      _errores['pr_cuotas'] = 'Obligatorio: cuotas de la prórroga';
     }
-    final monto1 = double.tryParse(
-            _prorrogaAlquilerCtrl.text.trim().replaceAll(',', '.')) ??
-        0;
+    final montoBase =
+        double.tryParse(_prorrogaMontoCtrl.text.trim().replaceAll(',', '.')) ?? 0;
+    if (montoBase <= 0) {
+      _errores['pr_monto'] = 'Obligatorio: monto base mayor a 0';
+    }
+
+    // ── Período 1 ──
+    final monto1 =
+        double.tryParse(_prorrogaAlquilerCtrl.text.trim().replaceAll(',', '.')) ?? 0;
     final hasta1 = int.tryParse(_prorrogaHastaCuotaCtrl.text.trim()) ?? 0;
-    if (monto1 <= 0 || hasta1 <= 0) {
-      return 'Debe completar el monto y las cuotas del primer período de la prórroga';
+    if (monto1 <= 0) {
+      _errores['pr_p1_monto'] = 'Falta el monto del período 1';
     }
-    return null;
+    if (hasta1 <= 0) {
+      _errores['pr_p1_hasta'] = 'Falta hasta qué cuota llega (ej: 12)';
+    } else {
+      if (cuotas > 0 && hasta1 > cuotas) {
+        _errores['pr_p1_hasta'] =
+            'Supera las $cuotas cuotas de la prórroga';
+      }
+    }
+
+    // ── Períodos extra: una fila parcialmente cargada es un ERROR ──
+    // (antes se descartaba en silencio al guardar y el dato se perdía).
+    for (int i = 0; i < _prorrogaPeriodosExtra.length; i++) {
+      final r = _prorrogaPeriodosExtra[i];
+      final monto =
+          double.tryParse(r.montoCtrl.text.trim().replaceAll(',', '.')) ?? 0;
+      final hasta = int.tryParse(r.hastaCtrl.text.trim()) ?? 0;
+      final pct =
+          double.tryParse(r.porcentajeCtrl.text.trim().replaceAll(',', '.')) ?? 0;
+      final tieneAlgo = r.montoCtrl.text.trim().isNotEmpty ||
+          r.hastaCtrl.text.trim().isNotEmpty ||
+          r.porcentajeCtrl.text.trim().isNotEmpty;
+      if (!tieneAlgo) continue; // fila virgen: se ignora (no molesta)
+      if (monto <= 0) {
+        _errores['pr_x${i}_monto'] =
+            'Complete el monto o borre la fila con la papelera';
+      }
+      if (hasta <= 0) {
+        _errores['pr_x${i}_hasta'] =
+            'Complete hasta qué cuota llega o borre la fila';
+      } else if (hasta < r.cuotaDesde) {
+        _errores['pr_x${i}_hasta'] =
+            'No puede llegar hasta $hasta: el período arranca en ${r.cuotaDesde}';
+      } else if (cuotas > 0 && hasta > cuotas) {
+        _errores['pr_x${i}_hasta'] = 'Supera las $cuotas cuotas de la prórroga';
+      }
+      // pct solo informativo: sin validación
+      pct.toString();
+    }
+
+    return !_errores.hayConPrefijo('pr_');
   }
 
   /// Cuota relativa donde arranca la prórroga. La prórroga siempre
@@ -1677,41 +1818,60 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
     return double.tryParse(_alquilerCtrl.text) ?? 0;
   }
 
-  /// Aviso de validación: las cuotas de la prórroga no deben superar
-  /// el total del contrato + prórroga (si se definió cuotas totales).
+  /// Aviso (NO bloqueante) sobre la continuidad de los períodos de la
+  /// prórroga: si se pasa de las cuotas definidas o si no llega a
+  /// cubrirlas todas. Considera también las filas de períodos extra.
   Widget? _buildValidacionPeriodosProrroga() {
-    final totalContrato = int.tryParse(_cuotasTotalCtrl.text.trim()) ?? 0;
     final prorrogaCuotas = int.tryParse(_prorrogaCuotasCtrl.text.trim()) ?? 0;
-    final hastaUltimoProrroga = int.tryParse(_prorrogaHastaCuotaCtrl.text.trim()) ?? 0;
-    if (totalContrato > 0 &&
-        prorrogaCuotas > 0 &&
-        hastaUltimoProrroga > 0 &&
-        hastaUltimoProrroga > prorrogaCuotas) {
-      return Padding(
-        padding: const EdgeInsets.only(top: 8),
-        child: Container(
-          padding: const EdgeInsets.all(8),
-          decoration: BoxDecoration(
-            color: const Color(0xFFC62828).withOpacity(0.1),
-            borderRadius: BorderRadius.circular(6),
-          ),
-          child: Row(
-            children: [
-              const Icon(Icons.error_outline, size: 16, color: Color(0xFFC62828)),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  'La prórroga llega hasta la cuota $hastaUltimoProrroga pero '
-                  'solo se definieron $prorrogaCuotas cuotas de prórroga.',
-                  style: const TextStyle(fontSize: 11, color: Color(0xFFC62828)),
-                ),
-              ),
-            ],
-          ),
-        ),
-      );
+    if (prorrogaCuotas <= 0) return null;
+
+    // Último "hasta" entre período 1 y filas extra
+    var hastaUltimo = int.tryParse(_prorrogaHastaCuotaCtrl.text.trim()) ?? 0;
+    for (final r in _prorrogaPeriodosExtra) {
+      final h = int.tryParse(r.hastaCtrl.text.trim()) ?? 0;
+      if (h > hastaUltimo) hastaUltimo = h;
     }
-    return null;
+    if (hastaUltimo <= 0) return null;
+
+    final String? aviso;
+    if (hastaUltimo > prorrogaCuotas) {
+      aviso =
+          'Los períodos llegan hasta la cuota $hastaUltimo pero la prórroga '
+          'tiene $prorrogaCuotas cuotas. Revisá el "Hasta mes" de los períodos.';
+    } else if (hastaUltimo < prorrogaCuotas) {
+      aviso =
+          'Los períodos cubren hasta la cuota $hastaUltimo de $prorrogaCuotas '
+          'de la prórroga. Las cuotas restantes no tienen monto definido.';
+    } else {
+      aviso = null;
+    }
+    if (aviso == null) return null;
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Container(
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: const Color(0xFFFFF8E1),
+          border: Border.all(color: const Color(0xFFF9A825)),
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.warning_amber_rounded,
+                size: 16, color: Color(0xFFF57F17)),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                aviso,
+                style:
+                    const TextStyle(fontSize: 11, color: Color(0xFF795548)),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   /// Sección "Prórroga" en el formulario de contrato.
@@ -1723,6 +1883,34 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Aviso: la prórroga cargada tiene datos inconsistentes de una
+          // versión anterior (fechas vacías o rangos de cuota invertidos).
+          if (_prorrogaInconsistente) ...[
+            Container(
+              padding: const EdgeInsets.all(8),
+              margin: const EdgeInsets.only(bottom: 8),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF8E1),
+                border: Border.all(color: const Color(0xFFF9A825)),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded,
+                      size: 16, color: Color(0xFFF57F17)),
+                  SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      'Esta prórroga tiene datos incompletos o inconsistentes '
+                      'de una versión anterior. Revisá los campos marcados y '
+                      'guardá el contrato para corregirla.',
+                      style: TextStyle(fontSize: 11, color: Color(0xFF795548)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           if (!_prorrogaExpandida) ...[
             OutlinedButton.icon(
               onPressed: () => setState(() {
@@ -1764,6 +1952,8 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                     onTap: () => setState(() {
                       _prorrogaEliminada = _prorroga != null;
                       _prorrogaExpandida = false;
+                      _prorrogaInconsistente = false;
+                      _errores.limpiarPrefijo('pr_');
                       _prorroga = null;
                       _prorrogaFechaInicioCtrl.clear();
                       _prorrogaFechaFinCtrl.clear();
@@ -1809,30 +1999,13 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                 ),
                 IconButton(
                   onPressed: () => setState(() {
-                    // Ocultar = cancelar: si había prórroga cargada, marcarla
-                    // para borrar al guardar; limpiar controllers para que no
-                    // se re-cree una prórroga fantasma con datos residuales.
-                    _prorrogaEliminada = _prorroga != null;
+                    // OCULTAR = solo colapsa la sección (no borra nada de la
+                    // BD ni de los controllers). Para eliminar la prórroga
+                    // usar el botón "Quitar prórroga".
                     _prorrogaExpandida = false;
-                    _prorroga = null;
-                    _prorrogaFechaInicioCtrl.clear();
-                    _prorrogaFechaFinCtrl.clear();
-                    _prorrogaCuotasCtrl.clear();
-                    _prorrogaMontoCtrl.clear();
-                    _prorrogaAlquilerCtrl.clear();
-                    _prorrogaHastaCuotaCtrl.clear();
-                    _prorrogaPorcentajeCtrl.clear();
-                    for (final r in _prorrogaPeriodosExtra) {
-                      r.montoCtrl.dispose();
-                      r.hastaCtrl.dispose();
-                      r.porcentajeCtrl.dispose();
-                      r.vaPorCtrl.dispose();
-                      r.mesCtrl.dispose();
-                    }
-                    _prorrogaPeriodosExtra = [];
                   }),
                   icon: const Icon(Icons.close, size: 20),
-                  tooltip: 'Ocultar',
+                  tooltip: 'Ocultar la sección (no borra la prórroga)',
                 ),
               ],
             ),
@@ -1848,11 +2021,12 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                     controller: _prorrogaFechaInicioCtrl,
                     readOnly: true,
                     onTap: _seleccionarProrrogaFechaInicio,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       isDense: true,
                       labelText: 'Fecha inicio *',
-                      prefixIcon: Icon(Icons.calendar_today, size: 16),
-                      border: OutlineInputBorder(),
+                      prefixIcon: const Icon(Icons.calendar_today, size: 16),
+                      border: const OutlineInputBorder(),
+                      errorText: _errores['pr_fecha_inicio'],
                     ),
                     style: const TextStyle(fontSize: 12),
                   ),
@@ -1863,11 +2037,12 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                     controller: _prorrogaFechaFinCtrl,
                     readOnly: true,
                     onTap: _seleccionarProrrogaFechaFin,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       isDense: true,
                       labelText: 'Fecha fin *',
-                      prefixIcon: Icon(Icons.calendar_today, size: 16),
-                      border: OutlineInputBorder(),
+                      prefixIcon: const Icon(Icons.calendar_today, size: 16),
+                      border: const OutlineInputBorder(),
+                      errorText: _errores['pr_fecha_fin'],
                     ),
                     style: const TextStyle(fontSize: 12),
                   ),
@@ -1878,10 +2053,11 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                     controller: _prorrogaCuotasCtrl,
                     keyboardType: TextInputType.number,
                     inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       isDense: true,
                       labelText: 'Cuotas *',
-                      border: OutlineInputBorder(),
+                      border: const OutlineInputBorder(),
+                      errorText: _errores['pr_cuotas'],
                     ),
                     style: const TextStyle(fontSize: 12),
                   ),
@@ -1895,10 +2071,11 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                     inputFormatters: [
                       FilteringTextInputFormatter.allow(RegExp(r'^\d*\.?\d*'))
                     ],
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       isDense: true,
                       labelText: 'Monto base \$',
-                      border: OutlineInputBorder(),
+                      border: const OutlineInputBorder(),
+                      errorText: _errores['pr_monto'],
                     ),
                     style: const TextStyle(fontSize: 12),
                     onChanged: (v) {
@@ -2006,12 +2183,13 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                               FilteringTextInputFormatter.allow(
                                   RegExp(r'^\d*\.?\d*'))
                             ],
-                            decoration: const InputDecoration(
+                            decoration: InputDecoration(
                               isDense: true,
                               hintText: '50000',
-                              contentPadding: EdgeInsets.symmetric(
+                              contentPadding: const EdgeInsets.symmetric(
                                   horizontal: 6, vertical: 8),
-                              border: OutlineInputBorder(),
+                              border: const OutlineInputBorder(),
+                              errorText: _errores['pr_p1_monto'],
                             ),
                             style: const TextStyle(fontSize: 12),
                           ),
@@ -2025,12 +2203,13 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                             inputFormatters: [
                               FilteringTextInputFormatter.digitsOnly
                             ],
-                            decoration: const InputDecoration(
+                            decoration: InputDecoration(
                               isDense: true,
                               hintText: '12',
-                              contentPadding: EdgeInsets.symmetric(
+                              contentPadding: const EdgeInsets.symmetric(
                                   horizontal: 6, vertical: 8),
-                              border: OutlineInputBorder(),
+                              border: const OutlineInputBorder(),
+                              errorText: _errores['pr_p1_hasta'],
                             ),
                             style: const TextStyle(fontSize: 12),
                           ),
@@ -2228,11 +2407,12 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                       FilteringTextInputFormatter.allow(
                           RegExp(r'^\d*\.?\d*'))
                     ],
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       isDense: true,
-                      contentPadding: EdgeInsets.symmetric(
+                      contentPadding: const EdgeInsets.symmetric(
                           horizontal: 6, vertical: 8),
-                      border: OutlineInputBorder(),
+                      border: const OutlineInputBorder(),
+                      errorText: _errores['pr_x${i}_monto'],
                     ),
                     style: const TextStyle(fontSize: 12),
                   ),
@@ -2246,11 +2426,12 @@ class _ContratoFormScreenState extends State<ContratoFormScreen> {
                     inputFormatters: [
                       FilteringTextInputFormatter.digitsOnly
                     ],
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                       isDense: true,
-                      contentPadding: EdgeInsets.symmetric(
+                      contentPadding: const EdgeInsets.symmetric(
                           horizontal: 6, vertical: 8),
-                      border: OutlineInputBorder(),
+                      border: const OutlineInputBorder(),
+                      errorText: _errores['pr_x${i}_hasta'],
                     ),
                     style: const TextStyle(fontSize: 12),
                   ),
