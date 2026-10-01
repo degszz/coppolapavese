@@ -2001,6 +2001,36 @@ class DatabaseHelper {
     // sustituye a los períodos fijos cuando corresponde.
     final periodos = await obtenerTodosLosPeriodos(contratoId);
     if (periodos.isNotEmpty) {
+      final fijos = periodos.where((p) => p['prorroga_id'] == null).toList();
+      final prorrogas =
+          periodos.where((p) => p['prorroga_id'] != null).toList();
+      if (prorrogas.isNotEmpty) {
+        // Las cuotas de prórroga son RELATIVAS a la prórroga (1..N); la
+        // cuota recibida es GLOBAL (sigue a los períodos fijos).
+        var ultimaFija = 0;
+        for (final f in fijos) {
+          final h = f['cuota_hasta'] as int? ?? 0;
+          if (h > ultimaFija) ultimaFija = h;
+        }
+        if (numeroCuota > ultimaFija) {
+          prorrogas.sort((a, b) =>
+              (a['cuota_desde'] as int).compareTo(b['cuota_desde'] as int));
+          final primero = prorrogas.first;
+          final vaPorBase = (primero['va_por'] as num?)?.toInt() ?? 0;
+          final desdeBase = primero['cuota_desde'] as int? ?? 1;
+          final base = vaPorBase > 0 ? vaPorBase : desdeBase;
+          final cuotaRel = numeroCuota - ultimaFija - 1 + base;
+          for (final p in prorrogas) {
+            final desde = p['cuota_desde'] as int? ?? 0;
+            final hasta = p['cuota_hasta'] as int? ?? 0;
+            if (cuotaRel >= desde && cuotaRel <= hasta) {
+              return (p['monto'] as num?)?.toDouble() ?? 0.0;
+            }
+          }
+          // Cuota relativa fuera de rango → último período de la prórroga
+          return (prorrogas.last['monto'] as num?)?.toDouble() ?? 0.0;
+        }
+      }
       // Preferir el período que contiene la cuota; si ninguno, el último.
       for (final p in periodos) {
         final desde = p['cuota_desde'] as int? ?? 0;

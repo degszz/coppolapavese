@@ -32,6 +32,9 @@ class _sepChip extends StatelessWidget {
 String _normalizarDescAlquilerContratos(
     String desc, int? numeroCuota, String? fechaEmisionIso) {
   if (!desc.toLowerCase().startsWith('alquiler')) return desc;
+  // Las de prórroga ya traen su numeración ("Alquiler Prórroga N°N")
+  if (desc.toLowerCase().contains('prórroga') ||
+      desc.toLowerCase().contains('prorroga')) return desc;
   if (numeroCuota == null || fechaEmisionIso == null || fechaEmisionIso.isEmpty) {
     return desc;
   }

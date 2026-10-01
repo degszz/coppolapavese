@@ -159,7 +159,70 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
       }
     }
 
-    // ¿La cuota pertenece a una prórroga?
+    // ── PRÓRROGA: la numeración se reinicia ──────────────────
+    // Los períodos de prórroga se numeran RELATIVOS (1..N) dentro de la
+    // propia prórroga. numeroCuota es la cuota GLOBAL del contrato
+    // (sigue contando las de los períodos fijos). Se mapea:
+    //   cuotaProrroga = numeroCuota - ultimaCuotaFija - 1 + vaPorBase
+    // Si el contrato agregó una prórroga, a partir de la primera cuota
+    // posterior al último período fijo la descripción es
+    // "Alquiler Prórroga N°N" empezando desde el "va por" de la prórroga.
+    final prorrogas =
+        periodosData.where((p) => p['prorroga_id'] != null).toList();
+    final fijos =
+        periodosData.where((p) => p['prorroga_id'] == null).toList();
+    if (prorrogas.isNotEmpty) {
+      var ultimaFija = 0;
+      for (final f in fijos) {
+        final h = f['cuota_hasta'] as int? ?? 0;
+        if (h > ultimaFija) ultimaFija = h;
+      }
+      if (numeroCuota > ultimaFija) {
+        // va_por del primer período de la prórroga (base de la numeración)
+        prorrogas.sort((a, b) =>
+            (a['cuota_desde'] as int).compareTo(b['cuota_desde'] as int));
+        final primero = prorrogas.first;
+        final vaPorBase = (primero['va_por'] as num?)?.toInt() ?? 0;
+        final desdeBase = primero['cuota_desde'] as int? ?? 1;
+        final base = vaPorBase > 0 ? vaPorBase : desdeBase;
+        final cuotaProrroga = numeroCuota - ultimaFija - 1 + base;
+
+        // Período de la prórroga que contiene esta cuota relativa
+        Map<String, dynamic>? periodoProrroga;
+        for (final p in prorrogas) {
+          final desde = p['cuota_desde'] as int;
+          final hasta = p['cuota_hasta'] as int;
+          if (cuotaProrroga >= desde && cuotaProrroga <= hasta) {
+            periodoProrroga = p;
+          }
+        }
+
+        final mesProrroga =
+            (periodoProrroga?['mes'] as num?)?.toInt() ?? 0;
+        final mesCuotaP = mesProrroga > 0 ? mesProrroga : mesEmision;
+
+        final hastaP = periodoProrroga?['cuota_hasta'] as int?;
+        if (periodoProrroga != null &&
+            hastaP != null &&
+            cuotaProrroga == hastaP - 1) {
+          nota.write('recuerde que el contrato de alquiler está próximo a vencer');
+        }
+        if (periodoProrroga != null &&
+            hastaP != null &&
+            cuotaProrroga == hastaP) {
+          if (nota.isNotEmpty) nota.write('\n');
+          nota.write('recuerde que habrá aumento de periodo en el próximo recibo');
+        }
+
+        return (
+          descripcion: 'Alquiler Prórroga N°$cuotaProrroga',
+          notaPeriodo: nota.toString(),
+          mesCuota: mesCuotaP,
+        );
+      }
+    }
+
+    // ¿La cuota pertenece a una prórroga (rango solapado)?
     final esProrroga = periodoActual?['prorroga_id'] != null;
     final mesProrroga = (periodoActual?['mes'] as num?)?.toInt() ?? 0;
 
@@ -168,10 +231,12 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
     final mesCuota = esProrroga && mesProrroga > 0 ? mesProrroga : mesEmision;
     final fechaCuotaStr = _calcularMesCuota(mesCuota, fechaEmision);
 
-    final prefijo = esProrroga ? 'Alquiler Prórroga Cuota N°' : 'Alquiler Cuota N°';
-    final desc = fechaCuotaStr.isNotEmpty
-        ? '$prefijo$numeroCuota - $fechaCuotaStr'
-        : '$prefijo$numeroCuota';
+    final prefijo = esProrroga ? 'Alquiler Prórroga N°' : 'Alquiler Cuota N°';
+    final desc = esProrroga
+        ? '$prefijo$numeroCuota'
+        : (fechaCuotaStr.isNotEmpty
+            ? '$prefijo$numeroCuota - $fechaCuotaStr'
+            : '$prefijo$numeroCuota');
 
     final hasta = periodoActual?['cuota_hasta'] as int?;
 

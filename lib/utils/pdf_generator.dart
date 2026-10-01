@@ -14,6 +14,10 @@ String _normalizarDescripcionAlquilerPdf(
     String descripcion, int? numeroCuota, String? fechaEmisionIso) {
   final desc = descripcion.trim();
   if (!desc.toLowerCase().startsWith('alquiler')) return descripcion;
+  // Las descripciones de prórroga ya vienen con su numeración propia
+  // ("Alquiler Prórroga N°N") — no pisarlas con la numeración global.
+  if (desc.toLowerCase().contains('prórroga') ||
+      desc.toLowerCase().contains('prorroga')) return desc;
   if (numeroCuota == null) return descripcion;
   // Forzar formato simple aunque la descripción ya traiga mes/año
   return 'Alquiler Cuota N°$numeroCuota';
