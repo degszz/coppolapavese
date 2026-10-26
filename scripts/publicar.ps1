@@ -17,7 +17,10 @@
 # ============================================================
 
 param(
-    [string]$mensaje = ""
+    [string]$mensaje = "",
+    # Si solo falló el último paso (crear la release en GitHub): reintentarlo
+    # sin compilar ni subir la versión de nuevo.
+    [switch]$SoloRelease
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,6 +44,25 @@ $ghHeaders = @{
 }
 $apiBase = "https://api.github.com/repos/$repo"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+# Leer la salida de git (mensajes con tildes) en UTF-8
+[Console]::OutputEncoding = [Text.Encoding]::UTF8
+
+if ($SoloRelease) {
+    # Reintentar SOLO la release de la versión actual (el build, el zip,
+    # el commit y el push ya se hicieron en la corrida que falló).
+    $vl = Select-String -Path (Join-Path $root 'pubspec.yaml') -Pattern '^version:\s*(\d+\.\d+\.\d+)\+' | Select-Object -First 1
+    if (-not $vl) { Write-Host "ERROR: no encontré la versión en pubspec.yaml" -ForegroundColor Red; exit 1 }
+    $nuevaVersion = $vl.Matches[0].Groups[1].Value
+    $zipName = "coppolapavese_v$nuevaVersion.zip"
+    $zip = Join-Path (Join-Path $root 'dist') $zipName
+    if (-not (Test-Path $zip)) { Write-Host "ERROR: no existe $zip. Corré publicar.ps1 completo." -ForegroundColor Red; exit 1 }
+    git fetch origin main --quiet
+    if ((git rev-parse HEAD) -ne (git rev-parse origin/main)) {
+        Write-Host "ERROR: el último commit no está subido a GitHub (o hay otros más nuevos). Corré publicar.ps1 completo." -ForegroundColor Red; exit 1
+    }
+    $mensaje = (git log -1 --format=%s)
+    Write-Host "==> Solo release v$nuevaVersion ($zipName)" -ForegroundColor Cyan
+} else {
 
 # ── 0b. ¿El repo local está al día con GitHub? ───────────────
 # Si se commiteó desde otra PC (ej. la de la inmobiliaria), primero hay
@@ -127,6 +149,7 @@ if ($cambios) {
 }
 git push origin main
 if ($LASTEXITCODE -ne 0) { Write-Host "ERROR en git push" -ForegroundColor Red; exit 1 }
+}   # fin de los pasos 0b-4 (se saltean con -SoloRelease)
 
 # ── 5. GitHub Release (vía API REST, mismo token de git) ─────
 $tag = "v$nuevaVersion"
@@ -139,8 +162,11 @@ try {
     Write-Host "Release $tag ya existía; se reemplaza." -ForegroundColor Yellow
 } catch { }
 
+# El texto va en bytes UTF-8: Windows PowerShell 5.1 manda los strings con
+# otra codificación y GitHub rechaza las tildes ("Problems parsing JSON").
+$json = @{ tag_name = $tag; name = "CoppolaPavese $tag"; body = $mensaje } | ConvertTo-Json
 $release = Invoke-RestMethod -Uri "$apiBase/releases" -Method Post -Headers $ghHeaders `
-    -Body (@{ tag_name = $tag; name = "CoppolaPavese $tag"; body = $mensaje } | ConvertTo-Json) `
+    -Body ([Text.Encoding]::UTF8.GetBytes($json)) -ContentType 'application/json; charset=utf-8' `
     -TimeoutSec 30
 
 $uploadUrl = ($release.upload_url -replace '\{\?.*$', '') + "?name=$zipName"

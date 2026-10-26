@@ -25,7 +25,8 @@ resto de una plantilla Astro: ignorarlo.
 - La copia en `Documentos\CoppolaPavese\inmobiliaria.db` de la PC de desarrollo es una
   foto vieja (3/10/2026): sirve para analizar, no es la real. Para analizar, copiarla al
   scratchpad y usar `C:\sqlite3\sqlite3.exe`. Nunca escribir sobre la base de la oficina.
-- Publicar versión: `.\scripts\publicar.ps1 -mensaje "fix: ..."` → sube versión en
+- Publicar versión: `powershell -ExecutionPolicy Bypass -File .\scripts\publicar.ps1 -mensaje "fix: ..."`
+  (si solo falló crear la release: `... publicar.ps1 -SoloRelease`) → sube versión en
   `pubspec.yaml`, compila, zip en `dist\`, `git add -A` + commit + push, GitHub Release
   (`degszz/coppolapavese`). Las PCs de la oficina se actualizan solas al abrir la app
   (`actualizar-github.ps1`, log en `%LocalAppData%\CoppolaPavese\update.log`). Un commit

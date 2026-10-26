@@ -6,6 +6,7 @@ import '../../database/database_helper.dart';
 import '../../models/recibo_model.dart';
 import '../../models/servicio_item_model.dart';
 import '../../models/concepto_regular_model.dart';
+import '../../utils/avisos_recibo.dart';
 import '../../utils/snackbar_helper.dart';
 import '../../utils/whatsapp_launcher.dart';
 import 'recibo_blanco_screen.dart';
@@ -114,20 +115,18 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
   bool _imprimirRecProp = true;
 
   // ── Helper: genera la nota de período para el pie del recibo ───
-  static const _avisoVencer =
-      'recuerde que el contrato de alquiler está próximo a vencer';
-  static const _avisoAumento =
-      'recuerde que habrá aumento de periodo en el próximo recibo';
+  // Textos compartidos con la lista de contratos (utils/avisos_recibo.dart)
+  static const _avisoVencer = avisoProximoAVencer;
+  static const _avisoAumento = avisoAumentoPeriodo;
 
   /// Devuelve la descripción, la nota al pie y el mes de la cuota
   /// [numeroCuota] (GLOBAL del contrato) emitida en [fechaEmision].
   ///
-  /// La nota al pie avisa cuando la cuota es la penúltima o la última del
-  /// período:
-  /// - Penúltima del período → "el contrato está próximo a vencer"
-  /// - Última del período     → "habrá aumento de periodo en el próximo recibo",
-  ///   salvo que sea la última del contrato (o de la prórroga): ahí no hay
-  ///   próximo período y avisa "próximo a vencer".
+  /// La nota al pie avisa:
+  /// - Última cuota de cada período → "habrá aumento de periodo en el próximo recibo"
+  /// - Última cuota del contrato (o de la prórroga) → "el contrato de alquiler
+  ///   está próximo a vencer" (en vez de "aumento": no hay período siguiente).
+  /// El resto de las cuotas no lleva aviso.
   ///
   /// [alerta] (no se imprime) explica al usuario si la prórroga activa
   /// tiene datos incompletos o si la cuota cae fuera de sus períodos.
@@ -249,11 +248,10 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
               : 'La cuota $cuotaProrroga de la prórroga no está en ningún '
                   'período cargado, así que no hay monto definido. Completá '
                   'los períodos de la prórroga en Editar contrato.';
-        } else if (hastaP != null) {
-          if (cuotaProrroga == hastaP - 1) avisar(_avisoVencer);
-          if (cuotaProrroga == hastaP) {
-            avisar(cuotaProrroga >= finProrroga ? _avisoVencer : _avisoAumento);
-          }
+        } else if (hastaP != null && cuotaProrroga == hastaP) {
+          // Igual que en los fijos: "aumento" al cerrar cada período y
+          // "próximo a vencer" solo en la última cuota de la prórroga.
+          avisar(cuotaProrroga >= finProrroga ? _avisoVencer : _avisoAumento);
         }
 
         return (
@@ -278,16 +276,13 @@ class _ReciboFormScreenState extends State<ReciboFormScreen>
         numeroCuota == cuotasTotal &&
         prorrogas.isEmpty;
 
-    // Aviso 1 (AMARILLO): penúltima cuota del período actual
-    if (hasta != null && numeroCuota == hasta - 1) {
-      avisar(_avisoVencer);
-    }
-
-    // Aviso 2 (ROJO): última cuota del período actual
+    // Última cuota del período → "habrá aumento", salvo que sea la última del
+    // contrato: ahí "próximo a vencer". "Próximo a vencer" sale SOLO en la
+    // última cuota del contrato (antes salía también en la penúltima de cada
+    // período y confundía: decía que vencía con muchos meses por delante).
     if (hasta != null && numeroCuota == hasta) {
       avisar(esFinContrato ? _avisoVencer : _avisoAumento);
     } else if (esFinContrato) {
-      // Aviso 3 (ROJO): última cuota del CONTRATO fuera de un período
       avisar(_avisoVencer);
     }
 

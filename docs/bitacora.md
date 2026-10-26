@@ -5,7 +5,7 @@ cambió, dónde y qué quedó pendiente. Claude la actualiza al terminar cada se
 
 ## Pendientes
 
-- [ ] Publicar v1.0.5 con los arreglos del 25/10 (todavía sin commit): paso A1 de [[guia-completa]].
+- [ ] Subir el arreglo de `publicar.ps1` (tildes + `-SoloRelease`): se va solo con la próxima publicación.
 - [ ] Día en la oficina: pasos B1–B14 de [[guia-completa]] (red, auto-actualización, acceso remoto).
 - [ ] Corregir datos de prórrogas y "Va por" (lista en [[red-compartida]], sección "Datos a corregir").
 - [ ] Lista de contratos: el "Alquiler" muestra el monto de la prórroga aunque todavía no empezó.
@@ -15,6 +15,25 @@ cambió, dónde y qué quedó pendiente. Claude la actualiza al terminar cada se
 - [ ] Probar en la app real: emitir/borrar un recibo y ver que el "Va por" vuelve atrás.
 
 ## 2026-10-26
+
+- **Regla del pie cambiada (pedido del usuario):** "próximo a vencer" sale SOLO en la
+  última cuota del contrato (o de la prórroga). Antes salía también en la penúltima de
+  cada período (5, 11, 17…) y era la causa de la confusión. "Habrá aumento" sigue en la
+  última cuota de cada período. Lista de contratos con los mismos colores. Sin publicar.
+
+- **Lista de contratos, tabla de períodos fijos** (`contratos_list_screen.dart`,
+  `_buildPeriodos`): los períodos ya terminados salían en rojo y parecían un error;
+  ahora en gris con "(terminado)". Rojo/ámbar solo en el período actual, con el mismo
+  criterio que el pie del recibo. El "Va por" salía siempre en la última fila (y con un
+  número corrido); ahora va en la fila de su período. Debajo de la tabla se muestra qué
+  va a decir el pie del próximo recibo, o que falta cargar un período. Los textos del
+  aviso están en `lib/utils/avisos_recibo.dart` (los usa también el recibo). Sin publicar.
+
+- **Publicada v1.0.5** (commit f57a662 + release con zip). La creación de la release
+  falló al principio por las tildes del mensaje ("Problems parsing JSON": PowerShell 5.1
+  no manda UTF-8); se reintentó con `publicar.ps1 -SoloRelease`. `publicar.ps1` ahora
+  manda el texto en UTF-8. Ojo: `.\scripts\publicar.ps1` escrito en el Símbolo del
+  sistema abre el Bloc de notas; usar siempre `powershell -ExecutionPolicy Bypass -File ...`.
 
 - La host es **Windows 11** y la no-host **Windows 10**. Windows 11 24H2 bloquea el
   acceso sin contraseña: nuevo `scripts/crear-usuario-red.ps1` (usuario `cpred`) y la

@@ -36,16 +36,21 @@ Los `.ps1` se corren así (nunca con doble clic):
 
 ## A. En casa, antes de ir
 
-- [ ] **A1. Publicar la versión nueva** (esto reemplaza "exportar la app y llevarla en el pendrive").
-  1. En Obsidian, borrá las notas vacías de la raíz: `2026-10-25.md` y todos los
-     `Sin título…` (`.base` y `.canvas`). No toques nada de la carpeta `docs`.
-  2. Abrí una Terminal en `C:\dev\cp` y corré:
+- [x] **A1. Publicar la versión nueva** — hecho el 26/10: **v1.0.5** está publicada.
+  Para las próximas veces (esto reemplaza "exportar la app y llevarla en el pendrive"):
+  1. Abrí una Terminal en `C:\dev\cp` y pegá (funciona en PowerShell y en el Símbolo
+     del sistema; escribirlo como `.\scripts\publicar.ps1` en el Símbolo del sistema
+     abre el Bloc de notas en vez de ejecutarlo):
      ```powershell
-     .\scripts\publicar.ps1 -mensaje "fix: notas del pie, prórrogas, red y auto-actualización"
+     powershell -ExecutionPolicy Bypass -File .\scripts\publicar.ps1 -mensaje "fix: lo que cambiaste"
      ```
-  3. Te muestra los archivos que va a subir → escribí `s` y Enter.
-  4. Esperá a que diga **PUBLICADO v1.0.5** (compila, así que tarda unos minutos).
-  5. Comprobá en https://github.com/degszz/coppolapavese/releases que aparece **v1.0.5** con un zip.
+  2. Te muestra los archivos que va a subir → escribí `s` y Enter.
+  3. Esperá a que diga **PUBLICADO v1.0.x** (compila, así que tarda unos minutos).
+  4. Si falla **solo el último paso** ("Creando GitHub Release"), no lo corras completo
+     de nuevo (subiría otro número de versión). Reintentá solo ese paso:
+     ```powershell
+     powershell -ExecutionPolicy Bypass -File .\scripts\publicar.ps1 -SoloRelease
+     ```
 
 - [ ] **A2. Pendrive.** Copiá:
   - La carpeta **`C:\dev\cp\scripts`** entera (los scripts necesitan estar juntos).
@@ -167,7 +172,7 @@ Los `.ps1` se corren así (nunca con doble clic):
    usa la copia vieja de la base de tu PC, nunca la de la oficina.
 2. **Commit no es lo mismo que publicar:**
    - `git commit` + `git push` → guarda el código en GitHub. **No llega a la oficina.**
-   - `.\scripts\publicar.ps1 -mensaje "..."` → **llega a la oficina**: las PCs se
+   - `powershell -ExecutionPolicy Bypass -File .\scripts\publicar.ps1 -mensaje "..."` → **llega a la oficina**: las PCs se
      actualizan la próxima vez que abren la app o al prenderse.
 3. Si es urgente: pediles que cierren la app y la abran de nuevo desde el acceso directo.
 4. Para confirmar: el inicio de la app muestra la versión (preguntales o entrá por acceso remoto).

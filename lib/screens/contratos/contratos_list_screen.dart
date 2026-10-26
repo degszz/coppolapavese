@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../../database/database_helper.dart';
+import '../../utils/avisos_recibo.dart';
 import '../../utils/snackbar_helper.dart';
 import 'contrato_form_screen.dart';
 import '../recibos/recibo_form_screen.dart';
@@ -1175,6 +1176,22 @@ onPressed: () async {
     // en lugar de los calculados desde recibos (_cuota_actual, _ultimo_mes_recibo)
     final cuotaManual = c['cuota_inicial'] as int? ?? 0;
     final mesEmision = c['mes_emision'] as int? ?? DateTime.now().month;
+    final cuotasTotal = c['cuotas_total'] as int? ?? 0;
+    final mesLabel = _mesesAbrev[(mesEmision - 1).clamp(0, 11)];
+    var ultimaHasta = 0;
+    for (final p in periodos) {
+      final h = p['cuota_hasta'] as int? ?? 0;
+      if (h > ultimaHasta) ultimaHasta = h;
+    }
+    // El "Va por" ya pasó todos los períodos cargados: falta cargar el
+    // siguiente período (o una prórroga) y el recibo no tendría monto.
+    final fueraDePeriodos = cuotaManual > 0 && cuotaManual > ultimaHasta;
+    // Lo que va a decir el pie del PRÓXIMO recibo (cuota = "Va por")
+    final avisoProximo = avisoPieCuotaFija(
+      cuota: cuotaManual,
+      periodosFijos: periodos,
+      cuotasTotal: cuotasTotal,
+    );
 
     return [
       _seccionTitulo('Periodos Fijos', Icons.calendar_month_outlined),
@@ -1221,45 +1238,53 @@ onPressed: () async {
               final hasta = p['cuota_hasta'] as int? ?? 0;
               final monto = (p['monto'] as num?)?.toDouble() ?? 0.0;
               final entre = cuotaManual >= desde && cuotaManual <= hasta;
+              final terminado = cuotaManual > hasta;
               final esUltimo = e.key == periodos.length - 1;
-              final multiplesPeriodos = periodos.length > 1;
 
-              // Va por: cuota manual (cuota_inicial) + mes manual (mes_emision)
-              final mesLabel = _mesesAbrev[(mesEmision - 1).clamp(0, 11)];
-              String? vaPorText;
-              if (multiplesPeriodos && esUltimo) {
-                final num = cuotaManual >= desde ? cuotaManual : desde;
-                vaPorText = '$num $mesLabel';
-              } else if (!multiplesPeriodos) {
-                vaPorText = entre ? '$cuotaManual $mesLabel' : null;
+              // Va por: se muestra en la fila del período donde está la cuota.
+              // (Antes, con varios períodos, salía siempre en la última fila
+              // y con un número corrido.) Si ya pasó todos, va en la última.
+              final String? vaPorText =
+                  entre || (fueraDePeriodos && esUltimo)
+                      ? '$cuotaManual $mesLabel'
+                      : null;
+
+              // Colores = mismo criterio que el aviso del pie del recibo:
+              // rojo = el próximo recibo avisa "habrá aumento" (cambio de período),
+              // naranja = el próximo recibo avisa "próximo a vencer" (última
+              // cuota del contrato), gris = período ya terminado.
+              final Color fondo;
+              if (entre && avisoProximo == avisoAumentoPeriodo) {
+                fondo = const Color(0xFFC62828).withOpacity(0.12);
+              } else if (entre && avisoProximo == avisoProximoAVencer) {
+                fondo = const Color(0xFFFFA000).withOpacity(0.18);
+              } else if (entre) {
+                fondo = const Color(0xFFFCE4EC);
+              } else if (terminado) {
+                fondo = const Color(0xFFF5F5F5);
+              } else {
+                fondo = Colors.white;
               }
-return Container(
+              final Color colorTexto = entre
+                  ? const Color(0xFFC2185B)
+                  : (terminado ? const Color(0xFF9E9E9E) : Colors.black87);
+              return Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                decoration: BoxDecoration(
-                  color: cuotaManual > hasta
-                      ? const Color(0xFFC62828).withOpacity(0.12) // ROJO: período superado
-                      : (cuotaManual == hasta - 1 && hasta > 0
-                          ? const Color(0xFFFFA000).withOpacity(0.18) // Ámbar: una antes
-                          : (e.key % 2 == 0
-                              ? Colors.white
-                              : const Color(0xFFFCF3F6))),
-                ),
+                decoration: BoxDecoration(color: fondo),
                 child: Row(
                   children: [
                     Expanded(
                       flex: 3,
                       child: Text(
-                          entre
-                              ? '#$desde — #$hasta'
+                          terminado
+                              ? '#$desde — #$hasta  (terminado)'
                               : '#$desde — #$hasta',
                           style: TextStyle(
                               fontSize: 12,
                               fontWeight:
                                   entre ? FontWeight.w700 : FontWeight.normal,
-                              color: entre
-                                  ? const Color(0xFFC2185B)
-                                  : Colors.black87)),
+                              color: colorTexto)),
                       ),
                     Expanded(
                       flex: 2,
@@ -1269,9 +1294,7 @@ return Container(
                               fontWeight: entre
                                   ? FontWeight.w700
                                   : FontWeight.w600,
-                              color: entre
-                                  ? const Color(0xFFC2185B)
-                                  : Colors.black87),
+                              color: colorTexto),
                           textAlign: TextAlign.right),
                     ),
                     Expanded(
@@ -1294,7 +1317,40 @@ return Container(
           ],
         ),
       ),
+      if (fueraDePeriodos)
+        _lineaAvisoPeriodos(
+          'La cuota $cuotaManual no está en ningún período fijo: cargá el '
+          'próximo período o una prórroga en Editar contrato.',
+          const Color(0xFFC62828),
+          Icons.error_outline,
+        )
+      else if (avisoProximo != null)
+        _lineaAvisoPeriodos(
+          'Próximo recibo (cuota $cuotaManual) lleva al pie: "$avisoProximo"',
+          avisoProximo == avisoAumentoPeriodo
+              ? const Color(0xFFC62828)
+              : const Color(0xFFE65100),
+          Icons.campaign_outlined,
+        ),
     ];
+  }
+
+  /// Línea chica debajo de la tabla de períodos fijos.
+  Widget _lineaAvisoPeriodos(String texto, Color color, IconData icono) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, left: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icono, size: 14, color: color),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(texto,
+                style: TextStyle(fontSize: 11, color: color, height: 1.3)),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Devuelve la fecha en formato corto (yyyy-MM-dd) de forma segura.

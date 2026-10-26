@@ -35,35 +35,35 @@ Volver a [[Inicio]] · Código: `lib/screens/recibos/recibo_form_screen.dart`
 
 ## Avisos al pie del recibo
 
-El aviso depende del período donde cae la cuota (fijo o de prórroga):
+Hay solo dos avisos (textos en `lib/utils/avisos_recibo.dart`):
 
 | Situación | Texto en el pie |
 |---|---|
-| Cuota en el medio del período | *(nada)* |
-| **Penúltima** cuota del período | `recuerde que el contrato de alquiler está próximo a vencer` |
-| **Última** cuota del período, y después hay otro período | `recuerde que habrá aumento de periodo en el próximo recibo` |
-| **Última** cuota del contrato (sin prórroga cargada) o última de la prórroga | `recuerde que el contrato de alquiler está próximo a vencer` |
-| Última cuota del contrato que no cae en ningún período cargado | `recuerde que el contrato de alquiler está próximo a vencer` |
+| **Última cuota de un período** (cambio de período) | `recuerde que habrá aumento de periodo en el próximo recibo` |
+| **Última cuota del contrato** (ej. la 24 de 24), o última de la prórroga | `recuerde que el contrato de alquiler está próximo a vencer` |
+| Cualquier otra cuota | *(nada)* |
 
-Ejemplo, contrato de 24 cuotas con períodos 1–6, 7–12, 13–18, 19–24:
+Si la última cuota del contrato es también la última de un período, va "próximo a
+vencer" (no hay período siguiente). Si el contrato tiene una prórroga cargada, la última
+cuota de los fijos dice "habrá aumento", porque después sigue la prórroga.
+
+Ejemplo, contrato de 24 cuotas con períodos 1–6, 7–12, 13–18 (y 19–24 o sin cargar):
 
 | Cuota | Pie |
 |---|---|
-| 1–4 | — |
-| 5 | próximo a vencer |
-| 6 | habrá aumento de periodo en el próximo recibo |
-| 7–10 | — |
-| 11 | próximo a vencer |
-| 12 | habrá aumento… |
-| … | … |
-| 23 | próximo a vencer |
-| 24 | próximo a vencer *(es la última del contrato: no hay aumento)* |
+| 6, 12, 18 | habrá aumento de periodo en el próximo recibo |
+| 24 | el contrato de alquiler está próximo a vencer |
+| el resto | — |
 
-Si ese contrato tiene una prórroga cargada, la cuota 24 dice "habrá aumento…" porque
-después viene la prórroga.
+(Hasta el 26/10/2026 "próximo a vencer" salía también en la penúltima cuota de cada
+período, y confundía: con muchos meses por delante, el recibo decía que vencía.)
 
 La nota se genera al elegir el contrato y al usar "Pagar próximo período" o "Período
 anterior". Se puede editar a mano antes de guardar; lo guardado queda fijo en el recibo.
+
+En la lista de contratos, la tabla de períodos fijos usa los mismos colores: rojo si el
+próximo recibo lleva "habrá aumento", naranja si lleva "próximo a vencer", gris para
+los períodos terminados. Debajo dice qué va a llevar el pie del próximo recibo.
 
 ## Alertas al armar el recibo (no se imprimen)
 
