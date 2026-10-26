@@ -56,3 +56,8 @@ opencode_temp_snippet.txt
 temp_check.txt
 nul
 coppolapavese
+# Obsidian: estado de la ventana (cambia solo, no subir)
+.obsidian/workspace*.json
+
+# Zips de cada version: viven en GitHub Releases, no en el repo
+dist/

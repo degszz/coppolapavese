@@ -8,6 +8,7 @@ import '../main.dart' show zoomNotifier;
 import '../models/inquilino_model.dart';
 import '../utils/snackbar_helper.dart';
 import '../utils/whatsapp_launcher.dart';
+import '../version.dart';
 import '../widgets/calendario_recibos.dart';
 import '../widgets/print_queue_dialog.dart';
 import '../models/recibo_model.dart';
@@ -636,7 +637,8 @@ class _InicioTabState extends State<_InicioTab> {
                           fontSize: 15,
                           fontWeight: FontWeight.bold,
                           color: Colors.white)),
-                  Text(fechaHoy,
+                  // La versión sirve para saber desde casa si la PC se actualizó
+                  Text('$fechaHoy  ·  v$appVersion',
                       style: TextStyle(
                           fontSize: 11,
                           color: Colors.white.withValues(alpha: 0.75))),

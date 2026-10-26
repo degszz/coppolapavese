@@ -1,22 +1,41 @@
 ﻿# ============================================================
-# reparar-red.ps1 — PC HOST (192.168.100.30)
+# reparar-red.ps1 — PC HOST
 # Re-aplica la configuración de red que Windows suele "olvidar"
 # tras reinicios: perfil Privado, firewall SMB, servicios,
-# IP estática y ahorro de energía del adaptador.
+# IP fija, ahorro de energía del adaptador y carpeta compartida.
 # Es idempotente: si todo está bien, no rompe nada.
+# Requiere administrador (la tarea programada lo corre como SYSTEM).
 # Log: %ProgramData%\CoppolaPavese\reparar-red.log
+#
+# Uso manual (PowerShell como administrador):
+#   powershell -ExecutionPolicy Bypass -File .\reparar-red.ps1
 # ============================================================
+
+param(
+    # IP fija que debe tener la PC host
+    [string]$IpHost = '192.168.100.30',
+    # Carpeta local que se comparte en la red
+    [string]$RutaCarpeta = 'C:\CoppolaPavese',
+    [string]$NombreShare = 'CoppolaPavese'
+)
 
 $ErrorActionPreference = 'Continue'
 $logDir  = "$env:ProgramData\CoppolaPavese"
 $logFile = "$logDir\reparar-red.log"
-$ipHost  = '192.168.100.30'
 
 if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
 
 function Log($msg) {
     $line = "[{0}] {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $msg
     Add-Content -Path $logFile -Value $line
+    Write-Host $line
+}
+
+$esAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+           ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $esAdmin) {
+    Write-Host 'Este script necesita administrador: click derecho > Ejecutar como administrador.' -ForegroundColor Red
+    exit 1
 }
 
 Log "=== Inicio reparación de red ==="
@@ -29,7 +48,7 @@ Get-NetConnectionProfile | Where-Object { $_.NetworkCategory -ne 'Private' } | F
     } catch { Log "ERROR perfil privado ($($_.Name)): $_" }
 }
 
-# 2. Firewall: reglas SMB-In habilitadas (grupo completo)
+# 2. Firewall: reglas de compartir archivos (Windows en español o inglés)
 try {
     Enable-NetFirewallRule -DisplayGroup "Compartir archivos e impresoras" -ErrorAction SilentlyContinue
     Enable-NetFirewallRule -DisplayGroup "File and Printer Sharing" -ErrorAction SilentlyContinue
@@ -58,26 +77,38 @@ foreach ($svc in 'lanmanserver', 'lanmanworkstation') {
 }
 Log "Servicios lanmanserver/lanmanworkstation OK"
 
-# 4. IP estática de la host (la re-aplica si se perdió)
+# 4. IP fija de la host.
+#    Solo la re-aplica si la PC está en la MISMA red (mismos 3 primeros
+#    números). Antes borraba todas las IPs aunque el router usara otra red,
+#    y la PC quedaba sin conexión.
 try {
+    $redEsperada = ($IpHost -split '\.')[0..2] -join '.'
     $iface = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' } | Select-Object -First 1
     if ($iface) {
-        $tieneIP = Get-NetIPAddress -InterfaceIndex $iface.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-                   Where-Object { $_.IPAddress -eq $ipHost }
-        if (-not $tieneIP) {
-            # Quitar IPs dinámicas conflictivas y asignar la fija
-            Get-NetIPAddress -InterfaceIndex $iface.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-                Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
-            New-NetIPAddress -InterfaceIndex $iface.ifIndex -IPAddress $ipHost `
-                -PrefixLength 24 -DefaultGateway '192.168.100.1' -ErrorAction Stop | Out-Null
-            Set-DnsClientServerAddress -InterfaceIndex $iface.ifIndex `
-                -ServerAddresses ('192.168.100.1', '8.8.8.8') -ErrorAction SilentlyContinue
-            Log "IP estática $ipHost re-asignada en $($iface.Name)"
+        $ips = @(Get-NetIPAddress -InterfaceIndex $iface.ifIndex -AddressFamily IPv4 -ErrorAction SilentlyContinue)
+        if ($ips.IPAddress -contains $IpHost) {
+            Log "IP fija OK ($IpHost en $($iface.Name))"
         } else {
-            Log "IP estática OK ($ipHost en $($iface.Name))"
+            $actual = ($ips | Select-Object -First 1).IPAddress
+            $redActual = if ($actual) { ($actual -split '\.')[0..2] -join '.' } else { '' }
+            if ($redActual -eq $redEsperada) {
+                $gw = (Get-NetRoute -InterfaceIndex $iface.ifIndex -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
+                       Select-Object -First 1).NextHop
+                if (-not $gw) { $gw = "$redEsperada.1" }
+                $ips | Remove-NetIPAddress -Confirm:$false -ErrorAction SilentlyContinue
+                Remove-NetRoute -InterfaceIndex $iface.ifIndex -DestinationPrefix '0.0.0.0/0' -Confirm:$false -ErrorAction SilentlyContinue
+                Set-NetIPInterface -InterfaceIndex $iface.ifIndex -Dhcp Disabled -ErrorAction SilentlyContinue
+                New-NetIPAddress -InterfaceIndex $iface.ifIndex -IPAddress $IpHost `
+                    -PrefixLength 24 -DefaultGateway $gw -ErrorAction Stop | Out-Null
+                Set-DnsClientServerAddress -InterfaceIndex $iface.ifIndex `
+                    -ServerAddresses ($gw, '8.8.8.8') -ErrorAction SilentlyContinue
+                Log "IP fija $IpHost re-asignada en $($iface.Name) (antes $actual, gateway $gw)"
+            } else {
+                Log "ADVERTENCIA: la PC tiene IP $actual y no está en la red $redEsperada.x. No se cambió nada. Revisar la IP del router y correr con -IpHost <ip correcta>."
+            }
         }
     }
-} catch { Log "ERROR IP estática: $_" }
+} catch { Log "ERROR IP fija: $_" }
 
 # 5. Desactivar ahorro de energía del adaptador (evita que Windows lo apague)
 try {
@@ -91,19 +122,26 @@ try {
     }
 } catch { Log "ERROR ahorro energía: $_" }
 
-# 6. Compartido de la carpeta existe y activo
+# 6. Carpeta compartida existe y activa.
+#    "Todos" se resuelve por su identificador (S-1-1-0) para que funcione
+#    en Windows en español ("Todos") y en inglés ("Everyone").
 try {
-    if (-not (Get-SmbShare -Name 'CoppolaPavese' -ErrorAction SilentlyContinue)) {
-        $rutaCarpeta = "C:\CoppolaPavese"
-        if (Test-Path $rutaCarpeta) {
-            New-SmbShare -Name 'CoppolaPavese' -Path $rutaCarpeta `
-                -FullAccess 'Todos' -ErrorAction Stop | Out-Null
-            Log "Carpeta compartida 'CoppolaPavese' re-creada"
+    $todos = ([System.Security.Principal.SecurityIdentifier]'S-1-1-0').Translate(
+                [System.Security.Principal.NTAccount]).Value
+    $share = Get-SmbShare -Name $NombreShare -ErrorAction SilentlyContinue
+    if (-not $share) {
+        if (Test-Path $RutaCarpeta) {
+            New-SmbShare -Name $NombreShare -Path $RutaCarpeta `
+                -FullAccess $todos -ErrorAction Stop | Out-Null
+            Log "Carpeta compartida '$NombreShare' re-creada ($RutaCarpeta, acceso total: $todos)"
         } else {
-            Log "ADVERTENCIA: no existe $rutaCarpeta para compartir (revisar ruta real)"
+            Log "ADVERTENCIA: no existe $RutaCarpeta para compartir. Correr con -RutaCarpeta <ruta real>."
         }
     } else {
-        Log "Carpeta compartida OK"
+        Log "Carpeta compartida OK ($($share.Path))"
+        if (-not (Test-Path (Join-Path $share.Path 'inmobiliaria.db'))) {
+            Log "ADVERTENCIA: no hay inmobiliaria.db dentro de $($share.Path)"
+        }
     }
 } catch { Log "ERROR share: $_" }
 

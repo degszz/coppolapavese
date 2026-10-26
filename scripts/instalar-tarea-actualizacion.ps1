@@ -38,6 +38,14 @@ $appDir = $null
 while ($true) {
     if ($dialog.ShowDialog() -eq 'OK') {
         $appDir = $dialog.SelectedPath
+        if (Test-Path "$appDir\inmobiliaria.db") {
+            # La actualización reemplaza la carpeta en espejo: con la base
+            # adentro se perderían los datos.
+            [System.Windows.Forms.MessageBox]::Show(
+                "Esa carpeta tiene la base de datos (inmobiliaria.db).`nLa app tiene que estar en una carpeta propia, separada de la base.`nMové la app a otra carpeta (ej. Escritorio\CoppolaPavese app) y volvé a correr este instalador.",
+                "Carpeta peligrosa", 'OK', 'Error') | Out-Null
+            continue
+        }
         if (Test-Path "$appDir\coppolapavese.exe") {
             break
         }
@@ -71,6 +79,9 @@ $cfg | ConvertTo-Json | Set-Content $configPath -Encoding UTF8
 $origenScripts = $PSScriptRoot
 Copy-Item "$origenScripts\actualizar-github.ps1" "$cfgDir\actualizar-github.ps1" -Force
 Copy-Item "$origenScripts\abrir-app.bat"         "$cfgDir\abrir-app.bat" -Force
+# Quitar el bloqueo de "archivo copiado de otra PC / descargado"
+Unblock-File "$cfgDir\actualizar-github.ps1" -ErrorAction SilentlyContinue
+Unblock-File "$cfgDir\abrir-app.bat" -ErrorAction SilentlyContinue
 Write-Host "Updater y launcher copiados a $cfgDir" -ForegroundColor Cyan
 
 # ── 3. Repuntar acceso directo del escritorio ────────────────
@@ -108,7 +119,10 @@ if (-not $accesoReemplazado) {
 }
 
 # ── 4. Tarea programada: chequear update al iniciar sesión ───
-$accion = New-ScheduledTaskAction -Execute $launcher
+# Solo actualiza, NO abre la app: al iniciar sesión la red todavía puede no
+# estar lista y la app abriría sin encontrar la base.
+$accion = New-ScheduledTaskAction -Execute 'powershell.exe' `
+    -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$cfgDir\actualizar-github.ps1`" -Silencioso"
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel LeastPrivilege
 

@@ -12,6 +12,7 @@ void mostrarNotificacion(
   required String texto,
   Color? color,
   SnackBarAction? action,
+  Duration duracion = const Duration(seconds: 3),
 }) {
   ScaffoldMessenger.of(context).hideCurrentSnackBar();
   ScaffoldMessenger.of(context).showSnackBar(
@@ -19,7 +20,7 @@ void mostrarNotificacion(
       content: Text(texto),
       backgroundColor: color,
       action: action,
-      duration: const Duration(seconds: 3),
+      duration: duracion,
       showCloseIcon: true,
       closeIconColor: Colors.white,
       behavior: SnackBarBehavior.floating,

@@ -817,16 +817,66 @@ class DatabaseHelper {
 
   Future<int> eliminarRecibo(int id) async {
     final db = await database;
+    // Datos del recibo antes de borrarlo (para revertir el "Va por")
+    final previo = await db.query(
+      'recibos',
+      columns: ['contrato_id', 'numero_cuota'],
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
     // Borrar servicios asociados primero
     await db.delete(
       'servicios_recibo',
       where: 'recibo_id = ?',
       whereArgs: [id],
     );
-    return await db.delete(
+    final borrados = await db.delete(
       'recibos',
       where: 'id = ?',
       whereArgs: [id],
+    );
+    if (previo.isNotEmpty) {
+      await _revertirVaPorTrasBorrar(
+        db,
+        previo.first['contrato_id'] as int?,
+        previo.first['numero_cuota'] as int?,
+      );
+    }
+    return borrados;
+  }
+
+  /// Al emitir un recibo, el "Va por" (cuota_inicial) y mes_emision del
+  /// contrato avanzan a la cuota siguiente. Si se borra ese recibo hay que
+  /// volverlos atrás; si no, el próximo recibo sale con una cuota de más y
+  /// los avisos del pie ("próximo a vencer" / "aumento") aparecen antes.
+  /// Solo se revierte cuando el "Va por" sigue apuntando a la cuota
+  /// siguiente a la borrada y no queda otro recibo con esa cuota o una
+  /// mayor, para no pisar un "Va por" cargado a mano.
+  Future<void> _revertirVaPorTrasBorrar(
+      Database db, int? contratoId, int? cuota) async {
+    if (contratoId == null || cuota == null || cuota <= 0) return;
+    final c = await db.query(
+      'contratos',
+      columns: ['cuota_inicial', 'mes_emision'],
+      where: 'id = ?',
+      whereArgs: [contratoId],
+      limit: 1,
+    );
+    if (c.isEmpty) return;
+    final vaPor = (c.first['cuota_inicial'] as int?) ?? 0;
+    if (vaPor != cuota + 1) return;
+    final quedan = await db.rawQuery(
+      'SELECT COUNT(*) AS n FROM recibos WHERE contrato_id = ? AND numero_cuota >= ?',
+      [contratoId, cuota],
+    );
+    if (((quedan.first['n'] as int?) ?? 0) > 0) return;
+    final mes = (c.first['mes_emision'] as int?) ?? 1;
+    await db.update(
+      'contratos',
+      {'cuota_inicial': cuota, 'mes_emision': mes <= 1 ? 12 : mes - 1},
+      where: 'id = ?',
+      whereArgs: [contratoId],
     );
   }
 
@@ -1872,28 +1922,10 @@ class DatabaseHelper {
   Future<int> obtenerNumCuotaParaContrato(int contratoId) async {
     final db = await database;
 
-    // 0. Si hay prórroga activa, reiniciar el conteo en la prórroga.
-    final prorroga = await obtenerProrrogaActiva(contratoId);
-    if (prorroga != null) {
-      final periodos = await obtenerProrrogaPeriodos(prorroga['id'] as int);
-      if (periodos.isNotEmpty) {
-        int start = 1 << 30;
-        for (final p in periodos) {
-          final desde = p['cuota_desde'] as int? ?? 0;
-          if (desde > 0 && desde < start) start = desde;
-        }
-        if (start != 1 << 30) {
-          // Solo contar recibos emitidos dentro de la prórroga (cuota >= start).
-          final res = await db.rawQuery(
-            'SELECT COALESCE(MAX(numero_cuota), 0) AS maximo FROM recibos '
-            'WHERE contrato_id = ? AND numero_cuota >= ?',
-            [contratoId, start],
-          );
-          final next = (res.first['maximo'] as int? ?? 0) + 1;
-          return next > start ? next : start;
-        }
-      }
-    }
+    // La cuota es siempre GLOBAL del contrato, también con prórroga: el
+    // pasaje a "Prórroga N°x" lo hace el generador del recibo con el ancla
+    // cuota_inicio_global. (Antes, con prórroga se ignoraba el "Va por" y
+    // se comparaba la cuota global contra el rango relativo de la prórroga.)
 
     // 1. Obtener cuota_inicial del contrato (el "Va por" editable)
     final contrato = await db.query(
@@ -2058,15 +2090,18 @@ class DatabaseHelper {
           return (prorrogas.last['monto'] as num?)?.toDouble() ?? 0.0;
         }
       }
-      // Preferir el período que contiene la cuota; si ninguno, el último.
-      for (final p in periodos) {
+      // Cuota todavía dentro de los períodos fijos: buscar solo entre los
+      // fijos (los de prórroga se numeran relativos y no se comparan
+      // contra la cuota global). Si ninguno la contiene, el último fijo.
+      final candidatos = fijos.isNotEmpty ? fijos : periodos;
+      for (final p in candidatos) {
         final desde = p['cuota_desde'] as int? ?? 0;
         final hasta = p['cuota_hasta'] as int? ?? 0;
         if (numeroCuota >= desde && numeroCuota <= hasta) {
           return (p['monto'] as num?)?.toDouble() ?? 0.0;
         }
       }
-      return (periodos.last['monto'] as num?)?.toDouble() ?? 0.0;
+      return (candidatos.last['monto'] as num?)?.toDouble() ?? 0.0;
     }
     final contrato = await db.query(
       'contratos',
@@ -2190,7 +2225,10 @@ class DatabaseHelper {
         pp.mes,
         p.id as prorroga_id,
         p.cuota_inicio_global as prorroga_inicio_global,
-        p.fecha_creacion as prorroga_fecha_creacion
+        p.fecha_creacion as prorroga_fecha_creacion,
+        p.cuotas_total as prorroga_cuotas,
+        p.fecha_inicio as prorroga_fecha_inicio,
+        p.fecha_fin as prorroga_fecha_fin
       FROM prorroga_periodos pp
       JOIN prorrogas p ON pp.prorroga_id = p.id
       WHERE p.contrato_id = ? AND p.activa = 1
@@ -2215,7 +2253,11 @@ class DatabaseHelper {
             "WHERE contrato_id = ? AND COALESCE(created_at, fecha_emision, '') <= ?",
             [contratoId, fc],
           );
-          inicioGlobal = ((ultAntes.first['m'] as num?)?.toInt() ?? 0) + 1;
+          final m = (ultAntes.first['m'] as num?)?.toInt() ?? 0;
+          // Sin recibos previos no se puede inferir: queda en 0 y el
+          // generador usa "última cuota fija + 1". (Antes daba 1 y todo el
+          // contrato pasaba a contarse como prórroga desde la cuota 1.)
+          inicioGlobal = m > 0 ? m + 1 : 0;
         }
       }
       if (inicioGlobal > 0) {

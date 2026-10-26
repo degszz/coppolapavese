@@ -1,5 +1,10 @@
 # Instalación, red compartida y auto-actualización — CoppolaPavese
 
+> **El paso a paso actualizado (25/10/2026) está en [docs/guia-completa.md](docs/guia-completa.md).**
+> Esta guía queda como referencia: los conceptos (sección 0), la limpieza de prórrogas
+> fantasma (2.3) y cómo simular una actualización desde tu PC (5) siguen valiendo.
+> Los `.ps1` correrlos con `powershell -ExecutionPolicy Bypass -File ...`, no con doble clic.
+
 Guía completa y ordenada. Leé primero la sección **0. Conceptos** — a partir
 de ahí, cada paso es copiar/ejecutar.
 

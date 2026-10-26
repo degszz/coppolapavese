@@ -40,6 +40,27 @@ $ghHeaders = @{
     Accept         = 'application/vnd.github+json'
 }
 $apiBase = "https://api.github.com/repos/$repo"
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+# ── 0b. ¿El repo local está al día con GitHub? ───────────────
+# Si se commiteó desde otra PC (ej. la de la inmobiliaria), primero hay
+# que traer esos cambios; si no, el push falla a mitad de camino.
+git fetch origin main --quiet
+$atras = [int](git rev-list --count HEAD..origin/main)
+if ($atras -gt 0) {
+    Write-Host "ERROR: GitHub tiene $atras commit(s) que esta PC no tiene." -ForegroundColor Red
+    Write-Host "Corré 'git pull' (o pedíselo a Claude), revisá que compile y volvé a publicar." -ForegroundColor Yellow
+    exit 1
+}
+
+# ── 0c. Mostrar qué se va a subir y confirmar ────────────────
+$pendientes = git status --short
+if ($pendientes) {
+    Write-Host "==> Archivos que se van a subir:" -ForegroundColor Cyan
+    $pendientes | ForEach-Object { Write-Host "    $_" }
+    $ok = Read-Host "¿Publicar estos cambios? (s/n)"
+    if ($ok -notmatch '^[sS]') { Write-Host "Cancelado." -ForegroundColor Yellow; exit 1 }
+}
 
 # ── 1. Bump automático de versión en pubspec.yaml ────────────
 $pubspec = Join-Path $root 'pubspec.yaml'
@@ -56,14 +77,32 @@ $patch = [int]$Matches.Groups[3].Value + 1   # sube solo el patch
 $build = [int]$Matches.Groups[4].Value + 1
 $nuevaVersion = "$major.$minor.$patch"
 $nuevaLinea = "version: $nuevaVersion+$build"
+$pubspecOriginal = Get-Content $pubspec -Raw
+$versionDart = Join-Path $root 'lib\version.dart'
+$versionDartOriginal = if (Test-Path $versionDart) { Get-Content $versionDart -Raw } else { $null }
 $lineas = $lineas -replace [regex]::Escape($versionLine), $nuevaLinea
 Set-Content -Path $pubspec -Value $lineas -Encoding UTF8
+# Versión visible en el inicio de la app (para saber si cada PC se actualizó)
+@(
+    '// Versión de la app que se muestra en el inicio.',
+    '// La actualiza sola scripts/publicar.ps1 en cada publicación: no editar a mano.',
+    "const String appVersion = '$nuevaVersion';"
+) | Set-Content -Path $versionDart -Encoding UTF8
 Write-Host "==> Versión subida a $nuevaVersion (build $build)" -ForegroundColor Cyan
 
 # ── 2. Build ─────────────────────────────────────────────────
 Write-Host "==> Compilando (flutter build windows --release)..." -ForegroundColor Cyan
+$ErrorActionPreference = 'Continue'   # flutter escribe avisos en stderr
 flutter build windows --release
-if ($LASTEXITCODE -ne 0) { Write-Host "ERROR en build" -ForegroundColor Red; exit 1 }
+$buildOk = ($LASTEXITCODE -eq 0)
+$ErrorActionPreference = 'Stop'
+if (-not $buildOk) {
+    # Volver la versión atrás para no "quemar" un número que nunca se publicó
+    [IO.File]::WriteAllText($pubspec, $pubspecOriginal)
+    if ($null -ne $versionDartOriginal) { [IO.File]::WriteAllText($versionDart, $versionDartOriginal) }
+    Write-Host "ERROR en build. No se publicó nada y la versión quedó como estaba." -ForegroundColor Red
+    exit 1
+}
 
 # ── 3. Zip ───────────────────────────────────────────────────
 $stamp = Get-Date -Format 'yyyyMMdd_HHmm'
